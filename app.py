@@ -143,4 +143,36 @@ if st.button("🔄 실시간 데이터 동기화"):
         all_news = get_naver_news_api(keywords, days_to_search) + get_google_news(keywords, days_to_search)
         
         if not all_news:
-            st.warning("수
+            st.warning("수집된 뉴스가 없습니다.")
+        else:
+            seen = set()
+            final_list = []
+            for n in all_news:
+                title_key = n['title'][:20]
+                if title_key not in seen:
+                    final_list.append(n)
+                    seen.add(title_key)
+            
+            # 티어순(1->4) 후 최신순 정렬
+            final_list.sort(key=lambda x: (x['tier'], -parse_to_datetime(x['raw_date']).timestamp()))
+
+            st.success(f"총 {len(final_list)}건의 소식을 찾았습니다. (조회 기간: 최근 {days_to_search}일)")
+            
+            for article in final_list:
+                badge_class = "naver-badge" if article['type'] == "Naver" else "google-badge"
+                tier_class = f"tier-{article['tier']}" if article['tier'] < 4 else ""
+                display_date = parse_to_datetime(article['raw_date']).strftime('%Y-%m-%d %H:%M')
+                
+                st.markdown(f"""
+                    <div class="news-card {tier_class}">
+                        <span class="{badge_class}">{article['type']}</span>
+                        <span class="tier-label"> | Tier {article['tier']}</span>
+                        <h4 style="margin: 8px 0;"><a href="{article['link']}" target="_blank" style="text-decoration: none; color: #1a1a1a;">{article['title']}</a></h4>
+                        <div style="font-size: 13px; color: #666;">
+                            <span class="press-label">{article['source']}</span> | {display_date}
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+st.divider()
+st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
