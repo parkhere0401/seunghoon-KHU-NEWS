@@ -22,33 +22,35 @@ if 'news_list' not in st.session_state:
 # --- [데이터 정의: 티어 및 매퍼] ---
 TIER_DATA = {
     1: ["조선일보", "중앙일보", "동아일보", "매일경제", "한국경제", "한겨레", "경향신문", "국민일보", "연합뉴스", "YTN", "SBS", "KBS", "MBC", "JTBC"],
-    2: ["한국일보", "문화일보", "서울신문", "세계일보", "머니투데이", "서울경제", "뉴시스", "뉴스1", "파이낸셜뉴스", "조선비즈", "이데일리", "한국경제TV", "아시아경제", "연합뉴스TV", "MBN", "채널A", "EBS"],
+    2: ["문화일보", "한국일보", "서울신문", "세계일보", "머니투데이", "서울경제", "뉴시스", "뉴스1", "파이낸셜뉴스", "조선비즈", "이데일리", "한국경제TV", "아시아경제", "연합뉴스TV", "MBN", "채널A", "EBS"],
     3: ["헤럴드경제", "전자신문", "오마이뉴스", "머니S", "매일신문", "아이뉴스24", "프레시안", "부산일보", "더팩트", "노컷뉴스", "블로터", "미디어오늘", "디지털데일리", "조세일보", "디지털타임스", "SBS Biz", "데일리안", "TV조선", "강원일보", "코리아헤럴드", "쿠키뉴스", "KTV", "IT동아", "한의신문", "민족의학신문", "매일일보", "로리더", "신아일보", "시사IN", "시사저널", "경인일보", "스포츠동아", "스포츠조선", "스포츠서울", "일간스포츠"]
 }
 
-# 네이트/다음 등 포털 내부 CP 코드 매핑 (매우 중요)
-CP_CODE_MAPPER = {
-    "spo": ("스포츠동아", 3),
-    "chosun_s": ("스포츠조선", 3),
-    "ss": ("스포츠서울", 3),
-    "sed": ("서울경제", 2),
-    "mk": ("매일경제", 1),
-    "chosun": ("조선일보", 1),
-    "joongang": ("중앙일보", 1),
-    "donga": ("동아일보", 1),
-    "yna": ("연합뉴스", 1),
-    "news1": ("뉴스1", 2),
-    "newsis": ("뉴시스", 2),
-    "edaily": ("이데일리", 2),
-    "mt": ("머니투데이", 2)
-}
-
+# 도메인 기반 매퍼 (문화일보 및 주요 2티어 매체 대거 보강)
 TIER_MAPPER = {
+    # Tier 1
     "chosun.com": ("조선일보", 1), "joongang.co.kr": ("중앙일보", 1), "donga.com": ("동아일보", 1),
     "mk.co.kr": ("매일경제", 1), "hankyung.com": ("한국경제", 1), "hani.co.kr": ("한겨레", 1),
     "khan.co.kr": ("경향신문", 1), "kmib.co.kr": ("국민일보", 1), "yna.co.kr": ("연합뉴스", 1),
     "ytn.co.kr": ("YTN", 1), "sbs.co.kr": ("SBS", 1), "kbs.co.kr": ("KBS", 1),
-    "imbc.com": ("MBC", 1), "jtbc.co.kr": ("JTBC", 1), "ohmynews.com": ("오마이뉴스", 3),
+    "imbc.com": ("MBC", 1), "jtbc.co.kr": ("JTBC", 1),
+    # Tier 2
+    "munhwa.com": ("문화일보", 2), "hankookilbo.com": ("한국일보", 2), "seoul.co.kr": ("서울신문", 2),
+    "segye.com": ("세계일보", 2), "mt.co.kr": ("머니투데이", 2), "sedaily.com": ("서울경제", 2),
+    "newsis.com": ("뉴시스", 2), "news1.kr": ("뉴스1", 2), "fnnews.com": ("파이낸셜뉴스", 2),
+    "biz.chosun.com": ("조선비즈", 2), "edaily.co.kr": ("이데일리", 2), "wowtv.co.kr": ("한국경제TV", 2),
+    "asiae.co.kr": ("아시아경제", 2), "mbn.co.kr": ("MBN", 2), "ichannela.com": ("채널A", 2),
+    # Tier 3
+    "ohmynews.com": ("오마이뉴스", 3), "heraldcorp.com": ("헤럴드경제", 3), "etnews.com": ("전자신문", 3),
+    "kyeongin.com": ("경인일보", 3), "sports.donga.com": ("스포츠동아", 3)
+}
+
+# 포털 원문 CP 코드 매퍼
+CP_CODE_MAPPER = {
+    "spo": ("스포츠동아", 3), "chosun_s": ("스포츠조선", 3), "ss": ("스포츠서울", 3),
+    "sed": ("서울경제", 2), "mk": ("매일경제", 1), "chosun": ("조선일보", 1),
+    "joongang": ("중앙일보", 1), "donga": ("동아일보", 1), "yna": ("연합뉴스", 1),
+    "news1": ("뉴스1", 2), "newsis": ("뉴시스", 2), "edaily": ("이데일리", 2), "mt": ("머니투데이", 2)
 }
 
 BLACKLIST_DOMAINS = ["blog.naver.com", "tistory.com", "brunch.co.kr", "namu.wiki", "contents.premium.naver.com", "youtube.com", "facebook.com", "instagram.com"]
@@ -56,42 +58,29 @@ BLACKLIST_DOMAINS = ["blog.naver.com", "tistory.com", "brunch.co.kr", "namu.wiki
 # --- [유틸리티 함수] ---
 def get_tier_info(url, source_name, title=""):
     try:
-        # [Step 1] URL 파라미터 기반 CP 코드 분석 (최우선)
+        # 1. URL 파라미터 기반 CP 코드 분석 (포털 리다이렉션 대응)
         parsed = urllib.parse.urlparse(url)
         params = urllib.parse.parse_qs(parsed.query)
         cpcd = params.get('cpcd', [None])[0]
-        
-        if cpcd and cpcd in CP_CODE_MAPPER:
-            return CP_CODE_MAPPER[cpcd]
+        if cpcd and cpcd in CP_CODE_MAPPER: return CP_CODE_MAPPER[cpcd]
 
-        # [Step 2] 제목에서 출처 역추적 (예: "제목 - 매체명")
-        title_source = ""
-        if " - " in title:
-            title_parts = title.split(" - ")
-            potential_source = title_parts[-1].strip()
-            # "네이트" 같은 플랫폼 이름이면 무시하고 앞쪽 확인
-            if potential_source == "네이트" and len(title_parts) > 1:
-                title_source = "" # 제목 끝이 네이트면 cpcd나 다른 정보에 의존
-            else:
-                title_source = potential_source
+        # 2. 매체명 텍스트 및 제목 역추적 매칭
+        title_source = title.split(" - ")[-1].strip() if " - " in title else ""
+        target_name = str(source_name).split(' - ')[0].strip()
+        search_target = f"{target_name} {title_source}".strip()
 
-        # [Step 3] 매체명/제목 기반 티어 판정
-        target_search = f"{source_name} {title_source}".strip()
         for tier, names in TIER_DATA.items():
             for name in names:
-                if name in target_search:
-                    return name, tier
+                if name in search_target: return name, tier
         
-        # [Step 4] 도메인 기반 역추적
+        # 3. 도메인 기반 역추적 (문화일보 등 도메인 필수 체크)
         domain = parsed.netloc.replace("www.", "").replace("m.", "")
         parts = domain.split('.')
         for i in range(len(parts)):
             sub = ".".join(parts[i:])
             if sub in TIER_MAPPER: return TIER_MAPPER[sub]
             
-        # 마지막 보루: 알려진 매체명이 있으면 사용
-        final_name = title_source if title_source and title_source != "네이트" else source_name
-        return final_name if final_name else domain, 4
+        return title_source if title_source and title_source != "네이트" else (target_name if target_name else domain), 4
     except:
         return "출처 확인 불가", 4
 
@@ -138,7 +127,7 @@ def fetch_news(days):
         st.error(f"수집 오류: {e}")
         return []
 
-# --- [UI 시작] ---
+# --- [UI 메인 실행] ---
 try:
     st.title("경희대학교 및 의료기관 뉴스 클리핑")
 
@@ -159,13 +148,12 @@ try:
         """, unsafe_allow_html=True)
 
     with st.sidebar:
-        # [UX 반영] 컨트롤 타워가 상단
         st.header("⚙️ 컨트롤 타워")
         days = st.slider("조회 기간 (일)", 1, 7, 3)
         if st.button("🔄 실시간 데이터 업데이트", use_container_width=True):
             st.session_state.news_list = fetch_news(days)
         
-        # 엑셀 다운로드 버튼 (업데이트 버튼 아래)
+        # 선택 기사 엑셀 추출
         selected_to_export = []
         if st.session_state.news_list:
             unique_links = set()
