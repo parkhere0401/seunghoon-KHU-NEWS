@@ -15,15 +15,20 @@ def get_khu_news():
     yesterday = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
     tomorrow = (date.today() + timedelta(days=1)).strftime('%Y-%m-%d')
     
-    keywords = ["경희대", "경희대학교", "경희의료원", "강동경희대학교병원", "강동경희"]
+    # 1. 키워드에 쌍따옴표를 붙여 '정확히 일치'하도록 강제합니다.
+    keywords = ['"경희대"', '"경희대학교"', '"경희의료원"', '"강동경희대학교병원"', '"강동경희"']
     keyword_query = " OR ".join(keywords)
     
-    # [수정] 노이즈가 많은 사이트들을 제외하여 메이저 언론사 노출 확률을 높임
-    # 실무적으로 불필요한 홍보성 매체들을 제외 연산자(-)로 걸러냅니다.
+    # 2. 노이즈가 되는 특정 단어들을 제외 연산자(-)로 추가합니다.
+    # 성균관대나 특정 정당 등 불필요한 검색 결과를 유발하는 단어를 여기에 넣으세요.
+    negative_keywords = "-성균관대 -성대 -조국혁신당 -국민의힘 -더불어민주당"
+    
+    # 3. 기존 노이즈 필터(사이트 중심)
     noise_filter = "-site:v.daum.net -site:blog.me -site:tistory.com -site:cafe.naver.com"
     
-    # 최종 쿼리: 키워드 + 날짜 + 노이즈 필터
-    query = f"({keyword_query}) after:{yesterday} before:{tomorrow} {noise_filter}"
+    # 최종 쿼리 조합
+    # (키워드들) AND (제외어들) AND (날짜) AND (사이트 필터)
+    query = f"({keyword_query}) {negative_keywords} after:{yesterday} before:{tomorrow} {noise_filter}"
     encoded_query = urllib.parse.quote(query)
     
     rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
