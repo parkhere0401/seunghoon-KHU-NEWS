@@ -18,6 +18,7 @@ TIER_DATA = {
     3: ["헤럴드경제", "전자신문", "오마이뉴스", "머니S", "매일신문", "아이뉴스24", "프레시안", "부산일보", "더팩트", "노컷뉴스", "블로터", "미디어오늘", "디지털데일리", "조세일보", "디지털타임스", "SBS Biz", "데일리안", "TV조선", "강원일보", "코리아헤럴드", "쿠키뉴스", "KTV", "IT동아", "한의신문", "민족의학신문", "매일일보", "로리더", "신아일보", "시사IN", "시사저널"]
 }
 
+# 도메인 기반 매퍼
 TIER_MAPPER = {
     "chosun.com": ("조선일보", 1), "joongang.co.kr": ("중앙일보", 1), "donga.com": ("동아일보", 1),
     "mk.co.kr": ("매일경제", 1), "hankyung.com": ("한국경제", 1), "hani.co.kr": ("한겨레", 1),
@@ -29,18 +30,38 @@ TIER_MAPPER = {
     "akomnews.com": ("한의신문", 3), "mjmedi.com": ("민족의학신문", 3)
 }
 
+# [추가] 네이트 뉴스 원문 코드 매핑 (cpcd 파라미터 분석용)
+NATE_CPCD_MAPPER = {
+    "sed": ("서울경제", 2), "chosun": ("조선일보", 1), "joongang": ("중앙일보", 1),
+    "donga": ("동아일보", 1), "mk": ("매일경제", 1), "hk": ("한국경제", 1),
+    "hkr": ("한겨레", 1), "kh": ("경향신문", 1), "cn": ("국민일보", 1),
+    "yna": ("연합뉴스", 1), "ytn": ("YTN", 1), "news1": ("뉴스1", 2), "newsis": ("뉴시스", 2)
+}
+
 def get_tier_info(url, source_name):
     try:
         parsed_url = urllib.parse.urlparse(url)
         domain = parsed_url.netloc.replace("www.", "").replace("m.", "")
+        
+        # 1. 네이트 뉴스 전용 분석 (cpcd 파라미터 확인)
+        if "nate.com" in domain:
+            params = urllib.parse.parse_qs(parsed_url.query)
+            cpcd = params.get('cpcd', [''])[0]
+            if cpcd in NATE_CPCD_MAPPER:
+                return NATE_CPCD_MAPPER[cpcd][0], NATE_CPCD_MAPPER[cpcd][1]
+
+        # 2. 티어 1~3 이름 매칭
         for tier, names in TIER_DATA.items():
             for name in names:
                 if name in source_name: return name, tier
+        
+        # 3. 도메인 역추적 (news.kbs.co.kr -> kbs.co.kr 인식)
         parts = domain.split('.')
         for i in range(len(parts)):
             sub_domain = ".".join(parts[i:])
             if sub_domain in TIER_MAPPER:
                 return TIER_MAPPER[sub_domain][0], TIER_MAPPER[sub_domain][1]
+        
         if "news.google.com" in domain: return source_name, 4
         return domain, 4
     except: return source_name, 4
@@ -62,7 +83,7 @@ with st.sidebar:
             st.write(", ".join(TIER_DATA[tier]))
     st.markdown("---")
     days_to_search = st.slider("조회 기간 설정 (일)", 1, 7, 3)
-    st.caption("※ 유튜브, SNS, 나무위키, 구글 기사모음 제외")
+    st.caption("※ 유튜브, SNS, 나무위키 제외")
 
 # CSS 스타일
 st.markdown("""
@@ -107,11 +128,7 @@ def get_google_news(keywords, days):
     try:
         feed = feedparser.parse(rss_url)
         for entry in feed.entries:
-            # [수정] 기사 리스트(Google News 자체 링크) 필터링 로직
-            # 출처가 Google News이거나 제목에 '전체 뉴스 보기'가 포함된 경우 제외
-            if "Google News" in entry.source.title or "전체 뉴스 보기" in entry.title:
-                continue
-            
+            if "Google News" in entry.source.title: continue
             name, tier = get_tier_info(entry.link, entry.source.title)
             articles.append({
                 "title": entry.title, "link": entry.link, "source": name,
