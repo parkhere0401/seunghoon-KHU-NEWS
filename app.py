@@ -4,7 +4,7 @@ import requests
 from datetime import datetime, date, timedelta
 import urllib.parse
 
-# 1. 페이지 설정
+# 1. 페이지 설정 (타이틀 고정)
 st.set_page_config(page_title="경희대학교 및 의료기관 뉴스 클리핑", page_icon="🏫", layout="wide")
 
 # API 키
@@ -18,7 +18,7 @@ TIER_DATA = {
     3: ["헤럴드경제", "전자신문", "오마이뉴스", "머니S", "매일신문", "아이뉴스24", "프레시안", "부산일보", "더팩트", "노컷뉴스", "블로터", "미디어오늘", "디지털데일리", "조세일보", "디지털타임스", "SBS Biz", "데일리안", "TV조선", "강원일보", "코리아헤럴드", "쿠키뉴스", "KTV", "IT동아", "한의신문", "민족의학신문", "매일일보", "로리더", "신아일보", "시사IN", "시사저널"]
 }
 
-# 도메인 기반 매퍼
+# 도메인 기반 매퍼 (방송사 및 주요 도메인 보강)
 TIER_MAPPER = {
     "chosun.com": ("조선일보", 1), "joongang.co.kr": ("중앙일보", 1), "donga.com": ("동아일보", 1),
     "mk.co.kr": ("매일경제", 1), "hankyung.com": ("한국경제", 1), "hani.co.kr": ("한겨레", 1),
@@ -31,22 +31,34 @@ TIER_MAPPER = {
 }
 
 def get_tier_info(url, source_name):
-    """URL 도메인 분석 및 매체명 매칭"""
+    """URL 도메인 및 매체명을 분석하여 언론사명과 티어를 결정"""
     try:
         parsed_url = urllib.parse.urlparse(url)
         domain = parsed_url.netloc.replace("www.", "").replace("m.", "")
-        if domain in TIER_MAPPER:
-            return TIER_MAPPER[domain][0], TIER_MAPPER[domain][1]
+        
+        # 1. 티어 1~3 이름 매칭 (RSS 제공 이름 우선 확인)
         for tier, names in TIER_DATA.items():
             for name in names:
                 if name in source_name:
                     return name, tier
-        return domain, 4 # 4티어는 도메인 표시
+        
+        # 2. 도메인 역추적 확인 (news.kbs.co.kr -> kbs.co.kr 인식)
+        parts = domain.split('.')
+        for i in range(len(parts)):
+            sub_domain = ".".join(parts[i:])
+            if sub_domain in TIER_MAPPER:
+                return TIER_MAPPER[sub_domain][0], TIER_MAPPER[sub_domain][1]
+        
+        # 3. 구글 뉴스 도메인 예외 처리
+        if "news.google.com" in domain:
+            return source_name, 4
+            
+        # 4. 그 외 (4티어) - 도메인 표시
+        return domain, 4
     except:
         return source_name, 4
 
 def parse_to_datetime(date_str):
-    """날짜 문자열을 Naive datetime 객체로 변환 (들여쓰기 수정 완료)"""
     formats = ['%a, %d %b %Y %H:%M:%S %z', '%a, %d %b %Y %H:%M:%S GMT', '%Y-%m-%d %H:%M:%S']
     for fmt in formats:
         try:
@@ -56,7 +68,7 @@ def parse_to_datetime(date_str):
             continue
     return datetime.now().replace(tzinfo=None)
 
-# --- 사이드바: 매체 정보 상시 노출 ---
+# --- 사이드바 구성 ---
 with st.sidebar:
     st.header("📊 매체 등급 정보")
     for tier in [1, 2, 3]:
@@ -76,6 +88,7 @@ st.markdown("""
     .naver-badge { background-color: #03cf5d; color: white; padding: 2px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
     .google-badge { background-color: #4285f4; color: white; padding: 2px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
     .press-label { color: #d32f2f; font-weight: bold; }
+    .tier-label { font-size: 12px; color: #666; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -109,6 +122,7 @@ def get_google_news(keywords, days):
     try:
         feed = feedparser.parse(rss_url)
         for entry in feed.entries:
+            # 구글 뉴스는 entry.source.title이 실제 매체명입니다.
             name, tier = get_tier_info(entry.link, entry.source.title)
             articles.append({
                 "title": entry.title, "link": entry.link, "source": name,
@@ -118,7 +132,7 @@ def get_google_news(keywords, days):
         pass
     return articles
 
-# --- 메인 실행부 ---
+# --- 메인 로직 ---
 keywords = ["경희대", "경희대학교", "경희의료원", "강동경희대학교병원", "강동경희"]
 
 if st.button("🔄 실시간 데이터 동기화"):
@@ -148,7 +162,7 @@ if st.button("🔄 실시간 데이터 동기화"):
                 st.markdown(f"""
                     <div class="news-card {tier_class}">
                         <span class="{badge_class}">{article['type']}</span>
-                        <span style="font-size:12px; color:#666; font-weight:bold;"> | Tier {article['tier']}</span>
+                        <span class="tier-label"> | Tier {article['tier']}</span>
                         <h4 style="margin: 8px 0;"><a href="{article['link']}" target="_blank" style="text-decoration: none; color: #1a1a1a;">{article['title']}</a></h4>
                         <div style="font-size: 13px; color: #666;">
                             <span class="press-label">{article['source']}</span> | {display_date}
