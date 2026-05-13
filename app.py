@@ -7,11 +7,11 @@ import urllib.parse
 # 1. 페이지 설정
 st.set_page_config(page_title="KHU News Dashboard", page_icon="🏫", layout="wide")
 
-# API 키
+# API 키 (전달해주신 키 적용)
 NAVER_CLIENT_ID = "_FNNM0QDYA8u84RC8qFE" 
 NAVER_CLIENT_SECRET = "oPX8YNZK6m"
 
-# [우선순위 타겟] 매핑 사전에 있는 매체들은 '메이저'로 분류하여 중복 시 우선 선택됩니다.
+# 도메인별 언론사명 매핑 사전 (이 목록에 있는 매체는 'Major'로 분류되어 상단에 노출됩니다)
 PRESS_MAPPER = {
     "chosun.com": "조선일보",
     "m-i.kr": "매일일보",
@@ -41,17 +41,25 @@ def get_press_name(url):
     except:
         return "Naver News"
 
-def format_date(date_str):
-    try:
-        dt = datetime.strptime(date_str, '%a, %d %b %Y %H:%M:%S %z')
-        return dt.strftime('%Y-%m-%d %H:%M')
-    except:
-        return date_str
+def parse_to_datetime(date_str):
+    """정확한 정렬을 위해 다양한 날짜 포맷을 datetime 객체로 변환"""
+    formats = [
+        '%a, %d %b %Y %H:%M:%S %z',  # Naver API / Google RSS 표준
+        '%a, %d %b %Y %H:%M:%S GMT', # Google RSS 일부
+        '%Y-%m-%d %H:%M:%S'          # 기타
+    ]
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_str, fmt)
+        except:
+            continue
+    return datetime.now() # 변환 실패 시 현재 시간 반환
 
-# CSS 스타일
+# CSS 스타일 (가독성 최적화 및 메이저 강조)
 st.markdown("""
     <style>
     .news-card { background-color: white; padding: 15px; border-radius: 10px; border-left: 5px solid #003366; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .major-card { border-left: 8px solid #d32f2f; background-color: #fff9f9; } /* 주요 언론사 강조 스타일 */
     .naver-badge { background-color: #03cf5d; color: white; padding: 2px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
     .google-badge { background-color: #4285f4; color: white; padding: 2px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
     .meta-info { color: #666; font-size: 13px; margin-top: 5px; }
@@ -59,7 +67,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🏫 경희 가족 통합 뉴스 모니터링")
+st.title("🏫 경희 가족 뉴스 통합 브리핑")
 
 # --- 수집 함수 (Naver API) ---
 def get_naver_news_api(keywords):
@@ -75,72 +83,4 @@ def get_naver_news_api(keywords):
                 press = get_press_name(item['originallink'])
                 articles.append({
                     "title": title, "link": item['link'], "source": press,
-                    "date": format_date(item['pubDate']), "type": "Naver"
-                })
-    except: return []
-    return articles
-
-# --- 수집 함수 (Google RSS) ---
-def get_google_news(keywords):
-    yesterday = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
-    tomorrow = (date.today() + timedelta(days=1)).strftime('%Y-%m-%d')
-    query = f"({' OR '.join([f'\"{k}\"' for k in keywords])}) after:{yesterday} before:{tomorrow}"
-    rss_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=ko&gl=KR&ceid=KR:ko"
-    articles = []
-    try:
-        feed = feedparser.parse(rss_url)
-        for entry in feed.entries:
-            articles.append({
-                "title": entry.title, "link": entry.link, "source": entry.source.title,
-                "date": entry.published, "type": "Google"
-            })
-    except: return []
-    return articles
-
-# --- UI 실행 ---
-target_keywords = ["경희대", "경희대학교", "경희의료원", "강동경희대학교병원", "강동경희"]
-
-if st.button("🔄 최신 뉴스 통합 업데이트"):
-    with st.spinner('뉴스를 분석 중입니다...'):
-        n_news = get_naver_news_api(target_keywords)
-        g_news = get_google_news(target_keywords)
-        all_news = n_news + g_news
-        
-        # [고도화된 중복 제거 로직]
-        # 같은 제목(앞 15자 기준)일 경우, PRESS_MAPPER에 있는 언론사를 우선 선택
-        best_articles = {}
-        for article in all_news:
-            title_id = article['title'][:15].strip()
-            
-            # 현재 기사의 우선순위 점수 (매핑 사전에 있는 이름이면 1점, 아니면 0점)
-            is_major = article['source'] in PRESS_MAPPER.values()
-            priority = 1 if is_major else 0
-            
-            if title_id not in best_articles:
-                best_articles[title_id] = {"article": article, "priority": priority}
-            else:
-                # 이미 저장된 기사보다 현재 기사의 우선순위가 더 높으면 교체
-                if priority > best_articles[title_id]["priority"]:
-                    best_articles[title_id] = {"article": article, "priority": priority}
-        
-        final_news = [v["article"] for v in best_articles.values()]
-
-    if not final_news:
-        st.warning("검색된 뉴스가 없습니다.")
-    else:
-        st.success(f"네이버({len(n_news)}건) + 구글({len(g_news)}건) → 중복 제거(메이저 우선) 총 {len(final_news)}건")
-        for article in final_news:
-            badge_class = "naver-badge" if article['type'] == "Naver" else "google-badge"
-            st.markdown(f"""
-                <div class="news-card">
-                    <span class="{badge_class}">{article['type']}</span>
-                    <h4 style="margin: 8px 0;"><a href="{article['link']}" target="_blank" style="text-decoration: none; color: #1a1a1a;">{article['title']}</a></h4>
-                    <div class="meta-info">
-                        <span class="press-name">출처: {article['source']}</span> | 
-                        <span>게재일: {article['date']}</span>
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
-
-st.divider()
-st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
+                    "raw_date": item['pub
