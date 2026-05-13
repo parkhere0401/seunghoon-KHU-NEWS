@@ -38,10 +38,11 @@ NATE_CPCD_MAPPER = {
     "yna": ("연합뉴스", 1), "ytn": ("YTN", 1), "news1": ("뉴스1", 2), "newsis": ("뉴시스", 2)
 }
 
-# 블랙리스트 도메인 (블로그, SNS, 위키 등)
+# [업데이트] 블랙리스트 도메인 (네이버 프리미엄 콘텐츠 추가)
 BLACKLIST_DOMAINS = [
     "blog.naver.com", "tistory.com", "brunch.co.kr", "egloos.com", 
-    "namu.wiki", "youtube.com", "facebook.com", "instagram.com", "twitter.com"
+    "contents.premium.naver.com", "namu.wiki", 
+    "youtube.com", "facebook.com", "instagram.com", "twitter.com"
 ]
 
 def get_tier_info(url, source_name):
@@ -86,7 +87,7 @@ with st.sidebar:
             st.write(", ".join(TIER_DATA[tier]))
     st.markdown("---")
     days_to_search = st.slider("조회 기간 설정 (일)", 1, 7, 3)
-    st.caption("※ 유튜브, SNS, 나무위키, 블로그 제외")
+    st.caption("※ 유튜브, SNS, 나무위키, 블로그, 프리미엄콘텐츠 제외")
 
 # CSS 스타일
 st.markdown("""
@@ -113,9 +114,7 @@ def get_naver_news_api(keywords, days):
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             for item in response.json().get('items', []):
-                # 블랙리스트 필터링
                 if any(black in item['link'] for black in BLACKLIST_DOMAINS): continue
-                
                 title = item['title'].replace("<b>", "").replace("</b>", "").replace("&quot;", '"').replace("&amp;", "&")
                 name, tier = get_tier_info(item['originallink'], "Naver News")
                 articles.append({
@@ -127,7 +126,6 @@ def get_naver_news_api(keywords, days):
 
 def get_google_news(keywords, days):
     start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
-    # 구글 검색 연산자에 블로그 제외 추가
     exclude_query = " ".join([f"-site:{b}" for b in BLACKLIST_DOMAINS])
     query = f"({' OR '.join([f'\"{k}\"' for k in keywords])}) after:{start_date} {exclude_query}"
     rss_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=ko&gl=KR&ceid=KR:ko"
@@ -136,7 +134,6 @@ def get_google_news(keywords, days):
         feed = feedparser.parse(rss_url)
         for entry in feed.entries:
             if "Google News" in entry.source.title: continue
-            # 블랙리스트 필터링
             if any(black in entry.link for black in BLACKLIST_DOMAINS): continue
             
             name, tier = get_tier_info(entry.link, entry.source.title)
