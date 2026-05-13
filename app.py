@@ -30,7 +30,7 @@ TIER_MAPPER = {
     "akomnews.com": ("한의신문", 3), "mjmedi.com": ("민족의학신문", 3)
 }
 
-# [추가] 네이트 뉴스 원문 코드 매핑 (cpcd 파라미터 분석용)
+# 네이트 뉴스 원문 코드 매핑
 NATE_CPCD_MAPPER = {
     "sed": ("서울경제", 2), "chosun": ("조선일보", 1), "joongang": ("중앙일보", 1),
     "donga": ("동아일보", 1), "mk": ("매일경제", 1), "hk": ("한국경제", 1),
@@ -38,24 +38,27 @@ NATE_CPCD_MAPPER = {
     "yna": ("연합뉴스", 1), "ytn": ("YTN", 1), "news1": ("뉴스1", 2), "newsis": ("뉴시스", 2)
 }
 
+# 블랙리스트 도메인 (블로그, SNS, 위키 등)
+BLACKLIST_DOMAINS = [
+    "blog.naver.com", "tistory.com", "brunch.co.kr", "egloos.com", 
+    "namu.wiki", "youtube.com", "facebook.com", "instagram.com", "twitter.com"
+]
+
 def get_tier_info(url, source_name):
     try:
         parsed_url = urllib.parse.urlparse(url)
         domain = parsed_url.netloc.replace("www.", "").replace("m.", "")
         
-        # 1. 네이트 뉴스 전용 분석 (cpcd 파라미터 확인)
         if "nate.com" in domain:
             params = urllib.parse.parse_qs(parsed_url.query)
             cpcd = params.get('cpcd', [''])[0]
             if cpcd in NATE_CPCD_MAPPER:
                 return NATE_CPCD_MAPPER[cpcd][0], NATE_CPCD_MAPPER[cpcd][1]
 
-        # 2. 티어 1~3 이름 매칭
         for tier, names in TIER_DATA.items():
             for name in names:
                 if name in source_name: return name, tier
         
-        # 3. 도메인 역추적 (news.kbs.co.kr -> kbs.co.kr 인식)
         parts = domain.split('.')
         for i in range(len(parts)):
             sub_domain = ".".join(parts[i:])
@@ -83,7 +86,7 @@ with st.sidebar:
             st.write(", ".join(TIER_DATA[tier]))
     st.markdown("---")
     days_to_search = st.slider("조회 기간 설정 (일)", 1, 7, 3)
-    st.caption("※ 유튜브, SNS, 나무위키 제외")
+    st.caption("※ 유튜브, SNS, 나무위키, 블로그 제외")
 
 # CSS 스타일
 st.markdown("""
@@ -110,7 +113,9 @@ def get_naver_news_api(keywords, days):
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             for item in response.json().get('items', []):
-                if "namu.wiki" in item['link']: continue
+                # 블랙리스트 필터링
+                if any(black in item['link'] for black in BLACKLIST_DOMAINS): continue
+                
                 title = item['title'].replace("<b>", "").replace("</b>", "").replace("&quot;", '"').replace("&amp;", "&")
                 name, tier = get_tier_info(item['originallink'], "Naver News")
                 articles.append({
@@ -122,13 +127,18 @@ def get_naver_news_api(keywords, days):
 
 def get_google_news(keywords, days):
     start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
-    query = f"({' OR '.join([f'\"{k}\"' for k in keywords])}) after:{start_date} -site:youtube.com -site:facebook.com -site:instagram.com -site:namu.wiki"
+    # 구글 검색 연산자에 블로그 제외 추가
+    exclude_query = " ".join([f"-site:{b}" for b in BLACKLIST_DOMAINS])
+    query = f"({' OR '.join([f'\"{k}\"' for k in keywords])}) after:{start_date} {exclude_query}"
     rss_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=ko&gl=KR&ceid=KR:ko"
     articles = []
     try:
         feed = feedparser.parse(rss_url)
         for entry in feed.entries:
             if "Google News" in entry.source.title: continue
+            # 블랙리스트 필터링
+            if any(black in entry.link for black in BLACKLIST_DOMAINS): continue
+            
             name, tier = get_tier_info(entry.link, entry.source.title)
             articles.append({
                 "title": entry.title, "link": entry.link, "source": name,
