@@ -68,5 +68,3 @@ if st.button('🗞️ 통합 뉴스 새로고침'):
                 st.divider()
 
 st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
-
-st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
