@@ -45,11 +45,11 @@ def get_press_name(url):
 def format_date(date_str):
     """날짜 형식을 읽기 편하게 변환 (YYYY-MM-DD HH:MM)"""
     try:
-        # Naver/Google 뉴스 날짜 포맷 (RFC 822 등) 처리
+        # Naver API 날짜 포맷 (RFC 822) 처리
         dt = datetime.strptime(date_str, '%a, %d %b %Y %H:%M:%S %z')
         return dt.strftime('%Y-%m-%d %H:%M')
     except:
-        return date_str # 변환 실패 시 원본 표시
+        return date_str
 
 # CSS 스타일
 st.markdown("""
@@ -82,7 +82,6 @@ def get_naver_news_api(keywords):
             for item in items:
                 title = item['title'].replace("<b>", "").replace("</b>", "").replace("&quot;", '"').replace("&amp;", "&")
                 press = get_press_name(item['originallink'])
-                # 게재일 포맷팅
                 pub_date = format_date(item['pubDate'])
                 articles.append({
                     "title": title,
@@ -106,7 +105,6 @@ def get_google_news(keywords):
     try:
         feed = feedparser.parse(rss_url)
         for entry in feed.entries:
-            # 구글 뉴스 날짜는 기사마다 형식이 다를 수 있어 예외처리 포함
             articles.append({
                 "title": entry.title,
                 "link": entry.link,
@@ -130,6 +128,7 @@ if st.button("🔄 최신 뉴스 통합 업데이트"):
         seen_titles = set()
         final_news = []
         for article in all_news:
+            # 제목 앞 20자를 키로 사용하여 중복 제거
             title_id = article['title'][:20]
             if title_id not in seen_titles:
                 final_news.append(article)
@@ -138,7 +137,9 @@ if st.button("🔄 최신 뉴스 통합 업데이트"):
     if not final_news:
         st.warning("어제와 오늘자로 검색된 뉴스가 없습니다.")
     else:
-        st.info(f"수집 결과 - Naver: {len(n_news)} / Google: {len(g_news)}")
+        # [수정] 네이버, 구글 각각의 건수와 중복 제외 최종 합계 표시
+        st.success(f"네이버({len(n_news)}건) + 구글({len(g_news)}건) → 중복 제외 총 {len(final_news)}건의 소식을 찾았습니다.")
+        
         for article in final_news:
             badge_class = "naver-badge" if article['type'] == "Naver" else "google-badge"
             st.markdown(f"""
