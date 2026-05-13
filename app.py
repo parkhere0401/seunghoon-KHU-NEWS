@@ -18,7 +18,7 @@ TIER_DATA = {
     3: ["헤럴드경제", "전자신문", "오마이뉴스", "머니S", "매일신문", "아이뉴스24", "프레시안", "부산일보", "더팩트", "노컷뉴스", "블로터", "미디어오늘", "디지털데일리", "조세일보", "디지털타임스", "SBS Biz", "데일리안", "TV조선", "강원일보", "코리아헤럴드", "쿠키뉴스", "KTV", "IT동아", "한의신문", "민족의학신문", "매일일보", "로리더", "신아일보", "시사IN", "시사저널"]
 }
 
-# 도메인 기반 매퍼 (방송사 및 주요 도메인 보강)
+# 도메인 기반 매퍼
 TIER_MAPPER = {
     "chosun.com": ("조선일보", 1), "joongang.co.kr": ("중앙일보", 1), "donga.com": ("동아일보", 1),
     "mk.co.kr": ("매일경제", 1), "hankyung.com": ("한국경제", 1), "hani.co.kr": ("한겨레", 1),
@@ -36,13 +36,13 @@ def get_tier_info(url, source_name):
         parsed_url = urllib.parse.urlparse(url)
         domain = parsed_url.netloc.replace("www.", "").replace("m.", "")
         
-        # 1. 티어 1~3 이름 매칭 (RSS 제공 이름 우선 확인)
+        # 1. 티어 1~3 이름 매칭
         for tier, names in TIER_DATA.items():
             for name in names:
                 if name in source_name:
                     return name, tier
         
-        # 2. 도메인 역추적 확인 (news.kbs.co.kr -> kbs.co.kr 인식)
+        # 2. 도메인 역추적 (news.kbs.co.kr -> kbs.co.kr 등 인식)
         parts = domain.split('.')
         for i in range(len(parts)):
             sub_domain = ".".join(parts[i:])
@@ -53,7 +53,6 @@ def get_tier_info(url, source_name):
         if "news.google.com" in domain:
             return source_name, 4
             
-        # 4. 그 외 (4티어) - 도메인 표시
         return domain, 4
     except:
         return source_name, 4
@@ -76,7 +75,7 @@ with st.sidebar:
             st.write(", ".join(TIER_DATA[tier]))
     st.markdown("---")
     days_to_search = st.slider("조회 기간 설정 (일)", 1, 7, 3)
-    st.caption("※ 유튜브, 페이스북, 인스타그램 제외")
+    st.caption("※ 유튜브, SNS, 나무위키 제외")
 
 # CSS 스타일
 st.markdown("""
@@ -104,32 +103,36 @@ def get_naver_news_api(keywords, days):
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             for item in response.json().get('items', []):
+                # 나무위키 차단 필터
+                if "namu.wiki" in item['link']: continue
+                
                 title = item['title'].replace("<b>", "").replace("</b>", "").replace("&quot;", '"').replace("&amp;", "&")
                 name, tier = get_tier_info(item['originallink'], "Naver News")
                 articles.append({
                     "title": title, "link": item['link'], "source": name,
                     "raw_date": item['pubDate'], "type": "Naver", "tier": tier
                 })
-    except:
-        pass
+    except: pass
     return articles
 
 def get_google_news(keywords, days):
     start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
-    query = f"({' OR '.join([f'\"{k}\"' for k in keywords])}) after:{start_date} -site:youtube.com -site:facebook.com -site:instagram.com"
+    # [수정] 나무위키(-site:namu.wiki) 제외 추가
+    query = f"({' OR '.join([f'\"{k}\"' for k in keywords])}) after:{start_date} -site:youtube.com -site:facebook.com -site:instagram.com -site:namu.wiki"
     rss_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=ko&gl=KR&ceid=KR:ko"
     articles = []
     try:
         feed = feedparser.parse(rss_url)
         for entry in feed.entries:
-            # 구글 뉴스는 entry.source.title이 실제 매체명입니다.
+            # 나무위키 차단 필터
+            if "namu.wiki" in entry.link: continue
+            
             name, tier = get_tier_info(entry.link, entry.source.title)
             articles.append({
                 "title": entry.title, "link": entry.link, "source": name,
                 "raw_date": entry.published, "type": "Google", "tier": tier
             })
-    except:
-        pass
+    except: pass
     return articles
 
 # --- 메인 로직 ---
@@ -140,35 +143,4 @@ if st.button("🔄 실시간 데이터 동기화"):
         all_news = get_naver_news_api(keywords, days_to_search) + get_google_news(keywords, days_to_search)
         
         if not all_news:
-            st.warning("수집된 뉴스가 없습니다.")
-        else:
-            seen = set()
-            final_list = []
-            for n in all_news:
-                title_key = n['title'][:20]
-                if title_key not in seen:
-                    final_list.append(n)
-                    seen.add(title_key)
-            
-            final_list.sort(key=lambda x: (x['tier'], -parse_to_datetime(x['raw_date']).timestamp()))
-
-            st.success(f"총 {len(final_list)}건의 소식을 찾았습니다. (조회 기간: 최근 {days_to_search}일)")
-            
-            for article in final_list:
-                badge_class = "naver-badge" if article['type'] == "Naver" else "google-badge"
-                tier_class = f"tier-{article['tier']}" if article['tier'] < 4 else ""
-                display_date = parse_to_datetime(article['raw_date']).strftime('%Y-%m-%d %H:%M')
-                
-                st.markdown(f"""
-                    <div class="news-card {tier_class}">
-                        <span class="{badge_class}">{article['type']}</span>
-                        <span class="tier-label"> | Tier {article['tier']}</span>
-                        <h4 style="margin: 8px 0;"><a href="{article['link']}" target="_blank" style="text-decoration: none; color: #1a1a1a;">{article['title']}</a></h4>
-                        <div style="font-size: 13px; color: #666;">
-                            <span class="press-label">{article['source']}</span> | {display_date}
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-
-st.divider()
-st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
+            st.warning("수
