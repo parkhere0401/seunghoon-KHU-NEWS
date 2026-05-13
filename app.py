@@ -15,7 +15,6 @@ st.set_page_config(page_title="경희대학교 및 의료기관 뉴스 클리핑
 NAVER_CLIENT_ID = "_FNNM0QDYA8u84RC8qFE" 
 NAVER_CLIENT_SECRET = "oPX8YNZK6m"
 
-# 세션 상태 초기화
 if 'news_list' not in st.session_state:
     st.session_state.news_list = []
 
@@ -38,22 +37,38 @@ BLACKLIST_DOMAINS = ["blog.naver.com", "tistory.com", "brunch.co.kr", "namu.wiki
 
 # --- [유틸리티 함수] ---
 def get_tier_info(url, source_name):
+    """URL과 매체명을 분석하여 정확한 출처와 티어를 반환합니다."""
     try:
+        # [우선순위 1] 매체명(source_name) 텍스트를 티어 리스트와 대조
+        # 구글 뉴스에서 준 '동아일보' 같은 텍스트를 바로 티어 판정에 사용
+        for tier, names in TIER_DATA.items():
+            for name in names:
+                if name in source_name:
+                    return name, tier
+        
+        # [우선순위 2] URL 도메인 분석
         parsed = urllib.parse.urlparse(url)
         domain = parsed.netloc.replace("www.", "").replace("m.", "")
+        
+        # 네이트 cpcd 파라미터 분석
         if "nate.com" in domain:
             cpcd = urllib.parse.parse_qs(parsed.query).get('cpcd', [''])[0]
             codes = {"sed": ("서울경제", 2), "chosun": ("조선일보", 1), "joongang": ("중앙일보", 1)}
             if cpcd in codes: return codes[cpcd]
-        for tier, names in TIER_DATA.items():
-            for name in names:
-                if name in source_name: return name, tier
+        
+        # 도메인 역추적 매핑
         parts = domain.split('.')
         for i in range(len(parts)):
             sub = ".".join(parts[i:])
             if sub in TIER_MAPPER: return TIER_MAPPER[sub]
+            
+        # [우선순위 3] 구글 뉴스 리다이렉션 도메인일 경우 구글이 준 매체명을 최종 사용
+        if "news.google.com" in domain:
+            return source_name, 4
+            
         return domain, 4
-    except: return str(source_name), 4
+    except:
+        return str(source_name), 4
 
 def parse_date(date_str):
     for fmt in ['%a, %d %b %Y %H:%M:%S %z', '%a, %d %b %Y %H:%M:%S GMT', '%Y-%m-%d %H:%M:%S']:
@@ -68,8 +83,11 @@ def extract_professor(title):
 def fetch_news(days):
     try:
         keywords = "경희대 | 경희대학교 | 경희의료원 | 강동경희대학교병원 | 강동경희"
+        # Naver
         n_url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(keywords)}&display=100&sort=date"
         n_res = requests.get(n_url, headers={"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}, timeout=15).json()
+        
+        # Google
         start = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
         g_q = f"(\"경희대\" OR \"경희대학교\") after:{start} " + " ".join([f"-site:{b}" for b in BLACKLIST_DOMAINS])
         g_f = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(g_q)}&hl=ko&gl=KR&ceid=KR:ko")
@@ -78,10 +96,13 @@ def fetch_news(days):
         if 'items' in n_res:
             for item in n_res['items']:
                 if any(b in item['link'] for b in BLACKLIST_DOMAINS): continue
-                name, tier = get_tier_info(item['originallink'], "Naver News")
+                # 네이버는 API 응답에 출처가 없으므로 링크 기반으로만 분석
+                name, tier = get_tier_info(item['originallink'], "")
                 temp.append({"title": item['title'].replace("<b>","").replace("</b>",""), "link": item['link'], "source": name, "date": item['pubDate'], "type": "Naver", "tier": tier})
+        
         for entry in g_f.entries:
             if not hasattr(entry, 'source') or "Google News" in entry.source.title: continue
+            # [수정] 구글 뉴스 RSS가 제공하는 실제 매체명(entry.source.title)을 적극 활용
             name, tier = get_tier_info(entry.link, entry.source.title)
             temp.append({"title": entry.title, "link": entry.link, "source": name, "date": entry.published, "type": "Google", "tier": tier})
 
@@ -123,15 +144,14 @@ try:
             st.session_state.news_list = fetch_news(days)
         st.caption("※ 유튜브, SNS, 나무위키, 블로그 제외")
         
-        # 엑셀 다운로드 버튼 (기사 선택 시 동적 표시)
+        # 선택된 기사 엑셀 추출 버튼
         selected_to_export = []
         if st.session_state.news_list:
             unique_links = set()
             for key, value in st.session_state.items():
                 if key.startswith("chk_") and value:
                     parts = key.split('_')
-                    tab_type = parts[1]
-                    idx = int(parts[2])
+                    tab_type, idx = parts[1], int(parts[2])
                     
                     target_list = st.session_state.news_list
                     if tab_type == "naver": target_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
@@ -158,21 +178,20 @@ try:
             with st.expander(f"Tier {tier} 리스트", expanded=False):
                 st.write(", ".join(TIER_DATA[tier]))
 
-    # 메인 뉴스 리스트 출력
+    # 뉴스 리스트 출력 (탭 구성)
     if not st.session_state.news_list:
         st.info("왼쪽 사이드바의 [업데이트] 버튼을 눌러주세요.")
     else:
-        # [업데이트] 탭 타이틀에 기사 수 표시
-        naver_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
-        google_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
+        n_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
+        g_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
         
         tab_all, tab_naver, tab_google = st.tabs([
-            f"📋 전체 보기 ({len(st.session_state.news_list)})", 
-            f"🟢 네이버 뉴스 ({len(naver_list)})", 
-            f"🔵 구글 뉴스 ({len(google_list)})"
+            f"📋 전체 ({len(st.session_state.news_list)})", 
+            f"🟢 네이버 ({len(n_list)})", 
+            f"🔵 구글 ({len(g_list)})"
         ])
         
-        def display_news_tab(news_data, tab_key):
+        def display_tab(news_data, tab_key):
             for i, art in enumerate(news_data):
                 col_check, col_card = st.columns([0.04, 0.96])
                 with col_check:
@@ -192,13 +211,13 @@ try:
                         </div>
                     """, unsafe_allow_html=True)
 
-        with tab_all: display_news_tab(st.session_state.news_list, "all")
-        with tab_naver: display_news_tab(naver_list, "naver")
-        with tab_google: display_news_tab(google_list, "google")
+        with tab_all: display_tab(st.session_state.news_list, "all")
+        with tab_naver: display_tab(n_list, "naver")
+        with tab_google: display_tab(g_list, "google")
 
     st.divider()
     st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
 
 except Exception as main_e:
-    st.error("치명적 오류 발생")
+    st.error("앱 실행 중 오류가 발생했습니다.")
     st.code(traceback.format_exc())
