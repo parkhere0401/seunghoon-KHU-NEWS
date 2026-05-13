@@ -15,6 +15,7 @@ st.set_page_config(page_title="경희대학교 및 의료기관 뉴스 클리핑
 NAVER_CLIENT_ID = "_FNNM0QDYA8u84RC8qFE" 
 NAVER_CLIENT_SECRET = "oPX8YNZK6m"
 
+# 세션 상태 초기화
 if 'news_list' not in st.session_state:
     st.session_state.news_list = []
 
@@ -25,46 +26,48 @@ TIER_DATA = {
     3: ["헤럴드경제", "전자신문", "오마이뉴스", "머니S", "매일신문", "아이뉴스24", "프레시안", "부산일보", "더팩트", "노컷뉴스", "블로터", "미디어오늘", "디지털데일리", "조세일보", "디지털타임스", "SBS Biz", "데일리안", "TV조선", "강원일보", "코리아헤럴드", "쿠키뉴스", "KTV", "IT동아", "한의신문", "민족의학신문", "매일일보", "로리더", "신아일보", "시사IN", "시사저널", "경인일보", "경기일보", "중부일보", "인천일보"]
 }
 
+# 도메인 기반 매퍼 (오마이뉴스 등 누락 도메인 보강)
 TIER_MAPPER = {
     "chosun.com": ("조선일보", 1), "joongang.co.kr": ("중앙일보", 1), "donga.com": ("동아일보", 1),
     "mk.co.kr": ("매일경제", 1), "hankyung.com": ("한국경제", 1), "hani.co.kr": ("한겨레", 1),
     "khan.co.kr": ("경향신문", 1), "kmib.co.kr": ("국민일보", 1), "yna.co.kr": ("연합뉴스", 1),
     "ytn.co.kr": ("YTN", 1), "sbs.co.kr": ("SBS", 1), "kbs.co.kr": ("KBS", 1),
-    "imbc.com": ("MBC", 1), "jtbc.co.kr": ("JTBC", 1), "kyeongin.com": ("경인일보", 3)
+    "imbc.com": ("MBC", 1), "jtbc.co.kr": ("JTBC", 1),
+    "hankookilbo.com": ("한국일보", 2), "newsis.com": ("뉴시스", 2), "news1.kr": ("뉴스1", 2),
+    "edaily.co.kr": ("이데일리", 2), "mt.co.kr": ("머니투데이", 2), "sedaily.com": ("서울경제", 2),
+    "ohmynews.com": ("오마이뉴스", 3), "akomnews.com": ("한의신문", 3), "mjmedi.com": ("민족의학신문", 3),
+    "kyeongin.com": ("경인일보", 3)
 }
 
 BLACKLIST_DOMAINS = ["blog.naver.com", "tistory.com", "brunch.co.kr", "namu.wiki", "contents.premium.naver.com", "youtube.com", "facebook.com", "instagram.com"]
 
 # --- [유틸리티 함수] ---
 def get_tier_info(url, source_name):
-    """포털(다음, 네이트 등) 기사의 실제 출처를 찾아 티어를 판정합니다."""
+    """URL과 매체명을 분석하여 정확한 출처와 티어를 결정합니다."""
     try:
-        # [Step 1] 매체명(source_name) 전처리 및 매칭
-        # 구글/네이버에서 준 텍스트(예: "경인일보")를 티어 리스트와 대조
-        clean_name = str(source_name).split(' - ')[0].strip() # "조선일보 - 네이버뉴스" 형태 대응
+        clean_name = str(source_name).split(' - ')[0].strip()
         
+        # 1. 매체명 텍스트 우선 매칭
         for tier, names in TIER_DATA.items():
             for name in names:
                 if name in clean_name:
                     return name, tier
         
-        # [Step 2] URL 도메인 분석
+        # 2. URL 도메인 분석
         parsed = urllib.parse.urlparse(url)
         domain = parsed.netloc.replace("www.", "").replace("m.", "")
         
-        # 포털 사이트인 경우 도메인 대신 source_name을 강제 사용
+        # 포털 도메인 예외 처리
         if any(agg in domain for agg in ["daum.net", "nate.com", "google.com", "naver.com"]):
-            # 네이트 cpcd 파라미터가 있다면 우선 적용
             if "nate.com" in domain:
                 cpcd = urllib.parse.parse_qs(parsed.query).get('cpcd', [''])[0]
                 codes = {"sed": ("서울경제", 2), "chosun": ("조선일보", 1), "joongang": ("중앙일보", 1)}
                 if cpcd in codes: return codes[cpcd]
             
-            # 포털 이름이 아닌 RSS 제공 매체명이 있다면 반환
             if clean_name and not any(p in clean_name for p in ["다음", "네이트", "Google", "Naver", "포털"]):
                 return clean_name, 4
         
-        # [Step 3] 도메인 역추적 매핑
+        # 도메인 역추적 매칭
         parts = domain.split('.')
         for i in range(len(parts)):
             sub = ".".join(parts[i:])
@@ -99,7 +102,6 @@ def fetch_news(days):
                 if any(b in item['link'] for b in BLACKLIST_DOMAINS): continue
                 name, tier = get_tier_info(item['originallink'], "")
                 temp.append({"title": item['title'].replace("<b>","").replace("</b>",""), "link": item['link'], "source": name, "date": item['pubDate'], "type": "Naver", "tier": tier})
-        
         for entry in g_f.entries:
             if not hasattr(entry, 'source') or "Google News" in entry.source.title: continue
             name, tier = get_tier_info(entry.link, entry.source.title)
@@ -143,7 +145,7 @@ try:
             st.session_state.news_list = fetch_news(days)
         st.caption("※ 유튜브, SNS, 나무위키, 블로그 제외")
         
-        # 선택 기사 합산 로직
+        # 선택된 기사 엑셀 추출
         selected_to_export = []
         if st.session_state.news_list:
             unique_links = set()
@@ -151,7 +153,6 @@ try:
                 if key.startswith("chk_") and value:
                     parts = key.split('_')
                     tab_type, idx = parts[1], int(parts[2])
-                    
                     target = st.session_state.news_list
                     if tab_type == "naver": target = [n for n in st.session_state.news_list if n['type'] == "Naver"]
                     elif tab_type == "google": target = [n for n in st.session_state.news_list if n['type'] == "Google"]
@@ -159,59 +160,4 @@ try:
                     if idx < len(target):
                         item = target[idx]
                         if item['link'] not in unique_links:
-                            selected_to_export.append({"매체명": item['source'], "기사 제목": item['title'], "저자(교수)": extract_professor(item['title']), "URL": item['link']})
-                            unique_links.add(item['link'])
-
-        if selected_to_export:
-            st.divider()
-            st.subheader(f"📥 {len(selected_to_export)}개 선택됨")
-            df = pd.DataFrame(selected_to_export)
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False)
-            st.download_button(label="엑셀 파일 다운로드", data=output.getvalue(), file_name=f"KHU_News_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
-        st.divider()
-        st.header("📊 매체 등급 정보")
-        for tier in [1, 2, 3]:
-            with st.expander(f"Tier {tier} 리스트", expanded=False):
-                st.write(", ".join(TIER_DATA[tier]))
-
-    # 뉴스 리스트 출력
-    if not st.session_state.news_list:
-        st.info("왼쪽 사이드바의 [업데이트] 버튼을 눌러주세요.")
-    else:
-        n_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
-        g_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
-        
-        tab_all, tab_naver, tab_google = st.tabs([f"📋 전체 ({len(st.session_state.news_list)})", f"🟢 네이버 ({len(n_list)})", f"🔵 구글 ({len(g_list)})"])
-        
-        def display_tab(news_data, tab_key):
-            for i, art in enumerate(news_data):
-                col_check, col_card = st.columns([0.04, 0.96])
-                with col_check: st.checkbox("", key=f"chk_{tab_key}_{i}")
-                with col_card:
-                    ribbon = "naver-ribbon" if art['type'] == "Naver" else "google-ribbon"
-                    badge = "naver-badge" if art['type'] == "Naver" else "google-badge"
-                    t_class = f"tier-{art['tier']}" if art['tier'] < 4 else ""
-                    st.markdown(f"""
-                        <div class="source-ribbon {ribbon}"></div>
-                        <div class="news-card {t_class}">
-                            <div class="badge {badge}">{art['type']} | Tier {art['tier']}</div>
-                            <h4 style="margin:5px 0;"><a href="{art['link']}" target="_blank" style="text-decoration:none; color:#1a1a1a;">{art['title']}</a></h4>
-                            <div style="font-size:13px; color:#666;">
-                                <span class="press-label">{art['source']}</span> | {parse_date(art['date']).strftime('%Y-%m-%d %H:%M')}
-                            </div>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-        with tab_all: display_tab(st.session_state.news_list, "all")
-        with tab_naver: display_tab(n_list, "naver")
-        with tab_google: display_tab(g_list, "google")
-
-    st.divider()
-    st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
-
-except Exception as main_e:
-    st.error("앱 실행 중 오류가 발생했습니다.")
-    st.code(traceback.format_exc())
+                            selected_to_export.append({"매체명": item['source
