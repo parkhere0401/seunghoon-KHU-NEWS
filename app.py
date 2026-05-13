@@ -62,7 +62,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🏫 경희 가족 통합 뉴스 모니터링")
+st.title("🏫 경희대학교 및 의료기관 통합 뉴스 모니터링")
 
 # --- 수집 함수 (Naver API) ---
 def get_naver_news_api(keywords):
