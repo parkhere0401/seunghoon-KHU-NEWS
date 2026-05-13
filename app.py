@@ -160,4 +160,58 @@ try:
                     if idx < len(target):
                         item = target[idx]
                         if item['link'] not in unique_links:
-                            selected_to_export.append({"매체명": item['source
+                            selected_to_export.append({"매체명": item['source'], "기사 제목": item['title'], "저자(교수)": extract_professor(item['title']), "URL": item['link']})
+                            unique_links.add(item['link'])
+
+        if selected_to_export:
+            st.divider()
+            st.subheader(f"📥 {len(selected_to_export)}개 선택됨")
+            df = pd.DataFrame(selected_to_export)
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False)
+            st.download_button(label="엑셀 파일 다운로드", data=output.getvalue(), file_name=f"KHU_News_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+        st.divider()
+        st.header("📊 매체 등급 정보")
+        for tier in [1, 2, 3]:
+            with st.expander(f"Tier {tier} 리스트", expanded=False):
+                st.write(", ".join(TIER_DATA[tier]))
+
+    if not st.session_state.news_list:
+        st.info("왼쪽 사이드바의 [업데이트] 버튼을 눌러주세요.")
+    else:
+        n_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
+        g_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
+        
+        tab_all, tab_naver, tab_google = st.tabs([f"📋 전체 ({len(st.session_state.news_list)})", f"🟢 네이버 ({len(n_list)})", f"🔵 구글 ({len(g_list)})"])
+        
+        def display_tab(news_data, tab_key):
+            for i, art in enumerate(news_data):
+                col_check, col_card = st.columns([0.04, 0.96])
+                with col_check: st.checkbox("", key=f"chk_{tab_key}_{i}")
+                with col_card:
+                    ribbon = "naver-ribbon" if art['type'] == "Naver" else "google-ribbon"
+                    badge = "naver-badge" if art['type'] == "Naver" else "google-badge"
+                    t_class = f"tier-{art['tier']}" if art['tier'] < 4 else ""
+                    st.markdown(f"""
+                        <div class="source-ribbon {ribbon}"></div>
+                        <div class="news-card {t_class}">
+                            <div class="badge {badge}">{art['type']} | Tier {art['tier']}</div>
+                            <h4 style="margin:5px 0;"><a href="{art['link']}" target="_blank" style="text-decoration:none; color:#1a1a1a;">{art['title']}</a></h4>
+                            <div style="font-size:13px; color:#666;">
+                                <span class="press-label">{art['source']}</span> | {parse_date(art['date']).strftime('%Y-%m-%d %H:%M')}
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+        with tab_all: display_tab(st.session_state.news_list, "all")
+        with tab_naver: display_tab(n_list, "naver")
+        with tab_google: display_tab(g_list, "google")
+
+    st.divider()
+    st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
+
+except Exception as main_e:
+    st.error("앱 실행 중 오류가 발생했습니다.")
+    st.code(traceback.format_exc())
