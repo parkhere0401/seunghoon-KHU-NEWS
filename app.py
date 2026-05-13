@@ -27,26 +27,35 @@ TIER_MAPPER = {
     "imbc.com": ("MBC", 1), "jtbc.co.kr": ("JTBC", 1),
     "hankookilbo.com": ("한국일보", 2), "newsis.com": ("뉴시스", 2), "news1.kr": ("뉴스1", 2),
     "edaily.co.kr": ("이데일리", 2), "mt.co.kr": ("머니투데이", 2), "sedaily.com": ("서울경제", 2),
-    "akomnews.com": ("한의신문", 3), "mjmedi.com": ("민족의학신문", 3)
+    "akomnews.com": ("한의신문", 3), "mjmedi.com": ("민족의학신문", 3), "dailypop.kr": ("데일리팝", 4)
 }
 
 def get_tier_info(url, source_name):
+    """URL 도메인을 분석하여 언론사명과 티어를 결정합니다."""
     try:
-        domain = urllib.parse.urlparse(url).netloc.replace("www.", "").replace("m.", "")
+        parsed_url = urllib.parse.urlparse(url)
+        domain = parsed_url.netloc.replace("www.", "").replace("m.", "")
+        
+        # 1. 티어 매퍼에서 도메인 검색
         if domain in TIER_MAPPER:
             return TIER_MAPPER[domain][0], TIER_MAPPER[domain][1]
         
-        # 매체명 텍스트 매칭
+        # 2. 매체명 텍스트 매칭 (티어 1~3)
         for tier, names in TIER_DATA.items():
             for name in names:
                 if name in source_name: return name, tier
+        
+        # 3. 매핑되지 않은 경우 도메인 이름을 출처로 사용 (4티어)
+        return domain, 4
+    except:
         return source_name, 4
-    except: return source_name, 4
 
 def parse_to_datetime(date_str):
     formats = ['%a, %d %b %Y %H:%M:%S %z', '%a, %d %b %Y %H:%M:%S GMT', '%Y-%m-%d %H:%M:%S']
     for fmt in formats:
-        try: return datetime.strptime(date_str, fmt).replace(tzinfo=None)
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            return dt.replace(tzinfo=None)
         except: continue
     return datetime.now().replace(tzinfo=None)
 
@@ -57,7 +66,7 @@ with st.sidebar:
         with st.expander(f"Tier {tier} 매체 리스트", expanded=True):
             st.write(", ".join(TIER_DATA[tier]))
     st.markdown("---")
-    days_to_search = st.slider("조회 기간 설정 (일)", 1, 7, 2, help="중앙일보 등 과거 기사가 안 보일 경우 기간을 늘려보세요.")
+    days_to_search = st.slider("조회 기간 설정 (일)", 1, 7, 3, help="중앙일보 등 과거 기사가 안 보일 경우 기간을 늘려보세요.")
     st.caption("※ 유튜브, 페이스북, 인스타그램 제외")
 
 # 스타일 설정
@@ -69,6 +78,8 @@ st.markdown("""
     .tier-3 { border-left: 10px solid #3498db; }
     .naver-badge { background-color: #03cf5d; color: white; padding: 2px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
     .google-badge { background-color: #4285f4; color: white; padding: 2px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
+    .press-label { color: #d32f2f; font-weight: bold; }
+    .tier-label { font-size: 12px; color: #666; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -77,7 +88,6 @@ st.title("경희대학교 및 의료기관 뉴스 클리핑")
 # --- 수집 함수 ---
 def get_naver_news_api(keywords, days):
     search_query = " | ".join(keywords)
-    # display=100으로 상향하여 누락 방지
     url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(search_query)}&display=100&sort=date"
     headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
     articles = []
@@ -87,66 +97,3 @@ def get_naver_news_api(keywords, days):
             for item in response.json().get('items', []):
                 title = item['title'].replace("<b>", "").replace("</b>", "").replace("&quot;", '"').replace("&amp;", "&")
                 name, tier = get_tier_info(item['originallink'], "Naver News")
-                articles.append({
-                    "title": title, "link": item['link'], "source": name,
-                    "raw_date": item['pubDate'], "type": "Naver", "tier": tier
-                })
-    except: return []
-    return articles
-
-def get_google_news(keywords, days):
-    start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
-    query = f"({' OR '.join([f'\"{k}\"' for k in keywords])}) after:{start_date} -site:youtube.com -site:facebook.com -site:instagram.com"
-    rss_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=ko&gl=KR&ceid=KR:ko"
-    articles = []
-    try:
-        feed = feedparser.parse(rss_url)
-        for entry in feed.entries:
-            name, tier = get_tier_info(entry.link, entry.source.title)
-            articles.append({
-                "title": entry.title, "link": entry.link, "source": name,
-                "raw_date": entry.published, "type": "Google", "tier": tier
-            })
-    except: return []
-    return articles
-
-# --- 메인 로직 ---
-keywords = ["경희대", "경희대학교", "경희의료원", "강동경희대학교병원", "강동경희"]
-
-if st.button("🔄 최신 데이터 동기화"):
-    with st.spinner('뉴스를 분석 중입니다...'):
-        all_news = get_naver_news_api(keywords, days_to_search) + get_google_news(keywords, days_to_search)
-        
-        if not all_news:
-            st.warning("검색된 뉴스가 없습니다.")
-        else:
-            # 중복 제거 및 정렬 (티어순 -> 최신순)
-            seen = set()
-            final_list = []
-            for n in all_news:
-                if n['title'][:20] not in seen:
-                    final_list.append(n)
-                    seen.add(n['title'][:20])
-            
-            final_list.sort(key=lambda x: (x['tier'], -parse_to_datetime(x['raw_date']).timestamp()))
-
-            st.success(f"총 {len(final_list)}건의 기사를 수집했습니다. (조회 기간: 최근 {days_to_search}일)")
-            
-            for article in final_list:
-                badge_class = "naver-badge" if article['type'] == "Naver" else "google-badge"
-                tier_class = f"tier-{article['tier']}" if article['tier'] < 4 else ""
-                display_date = parse_to_datetime(article['raw_date']).strftime('%Y-%m-%d %H:%M')
-                
-                st.markdown(f"""
-                    <div class="news-card {tier_class}">
-                        <span class="{badge_class}">{article['type']}</span>
-                        <span style="font-size:12px; color:#666; font-weight:bold;"> | Tier {article['tier']}</span>
-                        <h4 style="margin: 8px 0;"><a href="{article['link']}" target="_blank" style="text-decoration: none; color: #1a1a1a;">{article['title']}</a></h4>
-                        <div style="font-size: 13px; color: #666;">
-                            <span style="color:#d32f2f; font-weight:bold;">{article['source']}</span> | {display_date}
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-
-st.divider()
-st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
