@@ -84,4 +84,77 @@ st.title("경희대학교 및 의료기관 뉴스 클리핑")
 # --- 수집 함수 ---
 def get_naver_news_api(keywords, days):
     search_query = " | ".join(keywords)
-    url = f"https
+    url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(search_query)}&display=100&sort=date"
+    headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
+    articles = []
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            for item in response.json().get('items', []):
+                title = item['title'].replace("<b>", "").replace("</b>", "").replace("&quot;", '"').replace("&amp;", "&")
+                name, tier = get_tier_info(item['originallink'], "Naver News")
+                articles.append({
+                    "title": title, "link": item['link'], "source": name,
+                    "raw_date": item['pubDate'], "type": "Naver", "tier": tier
+                })
+    except:
+        pass
+    return articles
+
+def get_google_news(keywords, days):
+    start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
+    query = f"({' OR '.join([f'\"{k}\"' for k in keywords])}) after:{start_date} -site:youtube.com -site:facebook.com -site:instagram.com"
+    rss_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=ko&gl=KR&ceid=KR:ko"
+    articles = []
+    try:
+        feed = feedparser.parse(rss_url)
+        for entry in feed.entries:
+            name, tier = get_tier_info(entry.link, entry.source.title)
+            articles.append({
+                "title": entry.title, "link": entry.link, "source": name,
+                "raw_date": entry.published, "type": "Google", "tier": tier
+            })
+    except:
+        pass
+    return articles
+
+# --- 메인 실행부 ---
+keywords = ["경희대", "경희대학교", "경희의료원", "강동경희대학교병원", "강동경희"]
+
+if st.button("🔄 실시간 데이터 동기화"):
+    with st.spinner('뉴스를 분석 중입니다...'):
+        all_news = get_naver_news_api(keywords, days_to_search) + get_google_news(keywords, days_to_search)
+        
+        if not all_news:
+            st.warning("수집된 뉴스가 없습니다.")
+        else:
+            seen = set()
+            final_list = []
+            for n in all_news:
+                title_key = n['title'][:20]
+                if title_key not in seen:
+                    final_list.append(n)
+                    seen.add(title_key)
+            
+            final_list.sort(key=lambda x: (x['tier'], -parse_to_datetime(x['raw_date']).timestamp()))
+
+            st.success(f"총 {len(final_list)}건의 소식을 찾았습니다. (조회 기간: 최근 {days_to_search}일)")
+            
+            for article in final_list:
+                badge_class = "naver-badge" if article['type'] == "Naver" else "google-badge"
+                tier_class = f"tier-{article['tier']}" if article['tier'] < 4 else ""
+                display_date = parse_to_datetime(article['raw_date']).strftime('%Y-%m-%d %H:%M')
+                
+                st.markdown(f"""
+                    <div class="news-card {tier_class}">
+                        <span class="{badge_class}">{article['type']}</span>
+                        <span style="font-size:12px; color:#666; font-weight:bold;"> | Tier {article['tier']}</span>
+                        <h4 style="margin: 8px 0;"><a href="{article['link']}" target="_blank" style="text-decoration: none; color: #1a1a1a;">{article['title']}</a></h4>
+                        <div style="font-size: 13px; color: #666;">
+                            <span class="press-label">{article['source']}</span> | {display_date}
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+st.divider()
+st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
