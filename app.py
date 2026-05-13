@@ -7,11 +7,11 @@ import urllib.parse
 # 1. 페이지 설정
 st.set_page_config(page_title="KHU News Dashboard", page_icon="🏫", layout="wide")
 
-# API 키 (전달해주신 키 적용)
+# API 키
 NAVER_CLIENT_ID = "_FNNM0QDYA8u84RC8qFE" 
 NAVER_CLIENT_SECRET = "oPX8YNZK6m"
 
-# 도메인별 언론사명 매핑 사전
+# [우선순위 타겟] 매핑 사전에 있는 매체들은 '메이저'로 분류하여 중복 시 우선 선택됩니다.
 PRESS_MAPPER = {
     "chosun.com": "조선일보",
     "m-i.kr": "매일일보",
@@ -35,7 +35,6 @@ PRESS_MAPPER = {
 }
 
 def get_press_name(url):
-    """URL 도메인을 분석하여 언론사명을 반환"""
     try:
         domain = urllib.parse.urlparse(url).netloc.replace("www.", "").replace("m.", "")
         return PRESS_MAPPER.get(domain, domain)
@@ -43,9 +42,7 @@ def get_press_name(url):
         return "Naver News"
 
 def format_date(date_str):
-    """날짜 형식을 읽기 편하게 변환 (YYYY-MM-DD HH:MM)"""
     try:
-        # Naver API 날짜 포맷 (RFC 822) 처리
         dt = datetime.strptime(date_str, '%a, %d %b %Y %H:%M:%S %z')
         return dt.strftime('%Y-%m-%d %H:%M')
     except:
@@ -62,36 +59,25 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🏫 경희대학교 및 의료기관 통합 뉴스 모니터링")
+st.title("🏫 경희 가족 통합 뉴스 모니터링")
 
 # --- 수집 함수 (Naver API) ---
 def get_naver_news_api(keywords):
     search_query = " | ".join(keywords)
-    url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(search_query)}&display=30&sort=date"
-    
-    headers = {
-        "X-Naver-Client-Id": NAVER_CLIENT_ID,
-        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET
-    }
-    
+    url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(search_query)}&display=50&sort=date"
+    headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
     articles = []
     try:
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
-            items = response.json().get('items', [])
-            for item in items:
+            for item in response.json().get('items', []):
                 title = item['title'].replace("<b>", "").replace("</b>", "").replace("&quot;", '"').replace("&amp;", "&")
                 press = get_press_name(item['originallink'])
-                pub_date = format_date(item['pubDate'])
                 articles.append({
-                    "title": title,
-                    "link": item['link'],
-                    "source": press,
-                    "date": pub_date,
-                    "type": "Naver"
+                    "title": title, "link": item['link'], "source": press,
+                    "date": format_date(item['pubDate']), "type": "Naver"
                 })
-    except:
-        return []
+    except: return []
     return articles
 
 # --- 수집 함수 (Google RSS) ---
@@ -100,46 +86,49 @@ def get_google_news(keywords):
     tomorrow = (date.today() + timedelta(days=1)).strftime('%Y-%m-%d')
     query = f"({' OR '.join([f'\"{k}\"' for k in keywords])}) after:{yesterday} before:{tomorrow}"
     rss_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=ko&gl=KR&ceid=KR:ko"
-    
     articles = []
     try:
         feed = feedparser.parse(rss_url)
         for entry in feed.entries:
             articles.append({
-                "title": entry.title,
-                "link": entry.link,
-                "source": entry.source.title,
-                "date": entry.published,
-                "type": "Google"
+                "title": entry.title, "link": entry.link, "source": entry.source.title,
+                "date": entry.published, "type": "Google"
             })
-    except:
-        return []
+    except: return []
     return articles
 
 # --- UI 실행 ---
 target_keywords = ["경희대", "경희대학교", "경희의료원", "강동경희대학교병원", "강동경희"]
 
 if st.button("🔄 최신 뉴스 통합 업데이트"):
-    with st.spinner('뉴스를 수집 중입니다...'):
+    with st.spinner('뉴스를 분석 중입니다...'):
         n_news = get_naver_news_api(target_keywords)
         g_news = get_google_news(target_keywords)
-        
         all_news = n_news + g_news
-        seen_titles = set()
-        final_news = []
+        
+        # [고도화된 중복 제거 로직]
+        # 같은 제목(앞 15자 기준)일 경우, PRESS_MAPPER에 있는 언론사를 우선 선택
+        best_articles = {}
         for article in all_news:
-            # 제목 앞 20자를 키로 사용하여 중복 제거
-            title_id = article['title'][:20]
-            if title_id not in seen_titles:
-                final_news.append(article)
-                seen_titles.add(title_id)
+            title_id = article['title'][:15].strip()
+            
+            # 현재 기사의 우선순위 점수 (매핑 사전에 있는 이름이면 1점, 아니면 0점)
+            is_major = article['source'] in PRESS_MAPPER.values()
+            priority = 1 if is_major else 0
+            
+            if title_id not in best_articles:
+                best_articles[title_id] = {"article": article, "priority": priority}
+            else:
+                # 이미 저장된 기사보다 현재 기사의 우선순위가 더 높으면 교체
+                if priority > best_articles[title_id]["priority"]:
+                    best_articles[title_id] = {"article": article, "priority": priority}
+        
+        final_news = [v["article"] for v in best_articles.values()]
 
     if not final_news:
-        st.warning("어제와 오늘자로 검색된 뉴스가 없습니다.")
+        st.warning("검색된 뉴스가 없습니다.")
     else:
-        # [수정] 네이버, 구글 각각의 건수와 중복 제외 최종 합계 표시
-        st.success(f"네이버({len(n_news)}건) + 구글({len(g_news)}건) → 중복 제외 총 {len(final_news)}건의 소식을 찾았습니다.")
-        
+        st.success(f"네이버({len(n_news)}건) + 구글({len(g_news)}건) → 중복 제거(메이저 우선) 총 {len(final_news)}건")
         for article in final_news:
             badge_class = "naver-badge" if article['type'] == "Naver" else "google-badge"
             st.markdown(f"""
