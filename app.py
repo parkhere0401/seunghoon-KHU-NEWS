@@ -83,4 +83,72 @@ def get_naver_news_api(keywords):
                 press = get_press_name(item['originallink'])
                 articles.append({
                     "title": title, "link": item['link'], "source": press,
-                    "raw_date": item['pub
+                    "raw_date": item['pubDate'], "type": "Naver",
+                    "is_major": press in PRESS_MAPPER.values()
+                })
+    except: return []
+    return articles
+
+# --- 수집 함수 (Google RSS) ---
+def get_google_news(keywords):
+    yesterday = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+    tomorrow = (date.today() + timedelta(days=1)).strftime('%Y-%m-%d')
+    query = f"({' OR '.join([f'\"{k}\"' for k in keywords])}) after:{yesterday} before:{tomorrow}"
+    rss_url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=ko&gl=KR&ceid=KR:ko"
+    articles = []
+    try:
+        feed = feedparser.parse(rss_url)
+        for entry in feed.entries:
+            articles.append({
+                "title": entry.title, "link": entry.link, "source": entry.source.title,
+                "raw_date": entry.published, "type": "Google",
+                "is_major": entry.source.title in PRESS_MAPPER.values()
+            })
+    except: return []
+    return articles
+
+# --- UI 실행 ---
+target_keywords = ["경희대", "경희대학교", "경희의료원", "강동경희대학교병원", "강동경희"]
+
+if st.button("🔄 최신 뉴스 통합 업데이트"):
+    with st.spinner('데이터를 분석 중입니다...'):
+        n_news = get_naver_news_api(target_keywords)
+        g_news = get_google_news(target_keywords)
+        all_news = n_news + g_news
+        
+        # [정교한 정렬 로직]
+        # 1순위: 주요 언론사 여부 (True가 먼저)
+        # 2순위: 게재일 (최신순)
+        all_news.sort(key=lambda x: (not x['is_major'], parse_to_datetime(x['raw_date'])), reverse=False)
+        # Note: reverse=False인 이유는 'not x['is_major']'로 인해 Major(0)가 Other(1)보다 앞에 오기 때문입니다.
+        # 시간 정렬을 위해 sorting 방식을 조정합니다.
+        
+        major_news = sorted([n for n in all_news if n['is_major']], key=lambda x: parse_to_datetime(x['raw_date']), reverse=True)
+        other_news = sorted([n for n in all_news if not n['is_major']], key=lambda x: parse_to_datetime(x['raw_date']), reverse=True)
+        final_list = major_news + other_news
+
+    if not final_list:
+        st.warning("검색된 뉴스가 없습니다.")
+    else:
+        st.success(f"주요 언론사({len(major_news)}건) + 기타 매체({len(other_news)}건) 총 {len(final_list)}건의 기사를 수집했습니다.")
+        
+        for article in final_list:
+            badge_class = "naver-badge" if article['type'] == "Naver" else "google-badge"
+            major_class = "major-card" if article['is_major'] else ""
+            
+            # 날짜 표시용 변환
+            display_date = parse_to_datetime(article['raw_date']).strftime('%Y-%m-%d %H:%M')
+            
+            st.markdown(f"""
+                <div class="news-card {major_class}">
+                    <span class="{badge_class}">{article['type']}</span>
+                    <h4 style="margin: 8px 0;"><a href="{article['link']}" target="_blank" style="text-decoration: none; color: #1a1a1a;">{article['title']}</a></h4>
+                    <div class="meta-info">
+                        <span class="press-name">출처: {article['source']}</span> | 
+                        <span>게재일: {display_date}</span>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+
+st.divider()
+st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
