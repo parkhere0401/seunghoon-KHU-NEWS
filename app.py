@@ -116,7 +116,6 @@ try:
         </style>
         """, unsafe_allow_html=True)
 
-    # 사이드바 레이아웃
     with st.sidebar:
         st.header("⚙️ 컨트롤 타워")
         days = st.slider("조회 기간 (일)", 1, 7, 3)
@@ -124,20 +123,16 @@ try:
             st.session_state.news_list = fetch_news(days)
         st.caption("※ 유튜브, SNS, 나무위키, 블로그 제외")
         
-        # [UX 개선] 엑셀 다운로드 버튼을 티어 정보 위로 배치
-        # 현재 선택된 기사가 있는지 세션 상태를 확인하여 동적으로 표시
+        # 엑셀 다운로드 버튼 (기사 선택 시 동적 표시)
         selected_to_export = []
         if st.session_state.news_list:
-            # 모든 탭의 체크박스 상태를 취합 (chk_all_, chk_naver_, chk_google_ 키 확인)
             unique_links = set()
             for key, value in st.session_state.items():
                 if key.startswith("chk_") and value:
-                    # 키에서 인덱스와 탭 종류 추출 (예: chk_all_0)
                     parts = key.split('_')
                     tab_type = parts[1]
                     idx = int(parts[2])
                     
-                    # 탭 종류에 따른 원본 데이터 접근
                     target_list = st.session_state.news_list
                     if tab_type == "naver": target_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
                     elif tab_type == "google": target_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
@@ -145,10 +140,7 @@ try:
                     if idx < len(target_list):
                         item = target_list[idx]
                         if item['link'] not in unique_links:
-                            selected_to_export.append({
-                                "매체명": item['source'], "기사 제목": item['title'],
-                                "저자(교수)": extract_professor(item['title']), "URL": item['link']
-                            })
+                            selected_to_export.append({"매체명": item['source'], "기사 제목": item['title'], "저자(교수)": extract_professor(item['title']), "URL": item['link']})
                             unique_links.add(item['link'])
 
         if selected_to_export:
@@ -158,13 +150,7 @@ try:
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
-            
-            st.download_button(
-                label="엑셀 파일 다운로드", data=output.getvalue(),
-                file_name=f"KHU_News_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
+            st.download_button(label="엑셀 파일 다운로드", data=output.getvalue(), file_name=f"KHU_News_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
         st.divider()
         st.header("📊 매체 등급 정보")
@@ -176,7 +162,15 @@ try:
     if not st.session_state.news_list:
         st.info("왼쪽 사이드바의 [업데이트] 버튼을 눌러주세요.")
     else:
-        tab_all, tab_naver, tab_google = st.tabs(["📋 전체 보기", "🟢 네이버 뉴스", "🔵 구글 뉴스"])
+        # [업데이트] 탭 타이틀에 기사 수 표시
+        naver_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
+        google_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
+        
+        tab_all, tab_naver, tab_google = st.tabs([
+            f"📋 전체 보기 ({len(st.session_state.news_list)})", 
+            f"🟢 네이버 뉴스 ({len(naver_list)})", 
+            f"🔵 구글 뉴스 ({len(google_list)})"
+        ])
         
         def display_news_tab(news_data, tab_key):
             for i, art in enumerate(news_data):
@@ -199,8 +193,8 @@ try:
                     """, unsafe_allow_html=True)
 
         with tab_all: display_news_tab(st.session_state.news_list, "all")
-        with tab_naver: display_news_tab([n for n in st.session_state.news_list if n['type'] == "Naver"], "naver")
-        with tab_google: display_news_tab([n for n in st.session_state.news_list if n['type'] == "Google"], "google")
+        with tab_naver: display_news_tab(naver_list, "naver")
+        with tab_google: display_news_tab(google_list, "google")
 
     st.divider()
     st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
