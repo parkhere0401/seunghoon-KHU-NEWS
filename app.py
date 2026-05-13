@@ -15,26 +15,38 @@ def get_khu_news():
     yesterday = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
     tomorrow = (date.today() + timedelta(days=1)).strftime('%Y-%m-%d')
     
-    # 1. 키워드에 쌍따옴표를 붙여 '정확히 일치'하도록 강제합니다.
-    keywords = ['"경희대"', '"경희대학교"', '"경희의료원"', '"강동경희대학교병원"', '"강동경희"']
+    # 1. 구글 쿼리는 최대한 핵심 위주로 유지
+    keywords = ['"경희대"', '"경희대학교"', '"경희의료원"', '"강동경희"']
     keyword_query = " OR ".join(keywords)
     
-    # 2. 노이즈가 되는 특정 단어들을 제외 연산자(-)로 추가합니다.
-    # 성균관대나 특정 정당 등 불필요한 검색 결과를 유발하는 단어를 여기에 넣으세요.
-    negative_keywords = "-성균관대 -성대 -조국혁신당 -국민의힘 -더불어민주당"
-    
-    # 3. 기존 노이즈 필터(사이트 중심)
-    noise_filter = "-site:v.daum.net -site:blog.me -site:tistory.com -site:cafe.naver.com"
-    
-    # 최종 쿼리 조합
-    # (키워드들) AND (제외어들) AND (날짜) AND (사이트 필터)
-    query = f"({keyword_query}) {negative_keywords} after:{yesterday} before:{tomorrow} {noise_filter}"
+    # 2. 검색 단계에서의 노이즈 필터 (도메인 중심)
+    noise_filter = "-site:instagram.com -site:facebook.com -site:v.daum.net -site:blog.me"
+    query = f"({keyword_query}) after:{yesterday} before:{tomorrow} {noise_filter}"
     encoded_query = urllib.parse.quote(query)
     
     rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
-    
     feed = feedparser.parse(rss_url)
-    return feed.entries, yesterday, date.today().strftime('%Y-%m-%d')
+    
+    final_entries = []
+    
+    # 3. [고도화 필터] 제목과 본문을 나누어 검사
+    # 제목이 타 대학/정치인이면 '노이즈'일 확률이 99%이므로 제목 중심의 블랙리스트 적용
+    title_blacklist = ["성균관대", "조국혁신당", "국민의힘", "더불어민주당", "한양대", "중앙대"]
+
+    for entry in feed.entries:
+        title = entry.title
+        summary = entry.summary.lower() # RSS 요약문 (본문 일부)
+        
+        # 필터 A: 제목에 블랙리스트 단어가 있으면 '경희'가 언급되어도 제외 (노이즈 방지)
+        # 예: "성균관대-경희대 공동연구" 같은 기사는 살리고 싶다면 이 리스트를 조정하세요.
+        if any(bad_word in title for bad_word in title_blacklist):
+            continue
+            
+        # 필터 B: 제목이나 본문 요약 중 한 곳에라도 '경희'가 있으면 통과
+        if "경희" in title or "경희" in summary:
+            final_entries.append(entry)
+            
+    return final_entries, yesterday, date.today().strftime('%Y-%m-%d')
 
 # 뉴스 불러오기 버튼
 if st.button('🗞️ 최신 소식 업데이트'):
