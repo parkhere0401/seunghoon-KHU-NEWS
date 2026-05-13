@@ -22,7 +22,7 @@ if 'news_list' not in st.session_state:
 TIER_DATA = {
     1: ["조선일보", "중앙일보", "동아일보", "매일경제", "한국경제", "한겨레", "경향신문", "국민일보", "연합뉴스", "YTN", "SBS", "KBS", "MBC", "JTBC"],
     2: ["한국일보", "문화일보", "서울신문", "세계일보", "머니투데이", "서울경제", "뉴시스", "뉴스1", "파이낸셜뉴스", "조선비즈", "이데일리", "한국경제TV", "아시아경제", "연합뉴스TV", "MBN", "채널A", "EBS"],
-    3: ["헤럴드경제", "전자신문", "오마이뉴스", "머니S", "매일신문", "아이뉴스24", "프레시안", "부산일보", "더팩트", "노컷뉴스", "블로터", "미디어오늘", "디지털데일리", "조세일보", "디지털타임스", "SBS Biz", "데일리안", "TV조선", "강원일보", "코리아헤럴드", "쿠키뉴스", "KTV", "IT동아", "한의신문", "민족의학신문", "매일일보", "로리더", "신아일보", "시사IN", "시사저널"]
+    3: ["헤럴드경제", "전자신문", "오마이뉴스", "머니S", "매일신문", "아이뉴스24", "프레시안", "부산일보", "더팩트", "노컷뉴스", "블로터", "미디어오늘", "디지털데일리", "조세일보", "디지털타임스", "SBS Biz", "데일리안", "TV조선", "강원일보", "코리아헤럴드", "쿠키뉴스", "KTV", "IT동아", "한의신문", "민족의학신문", "매일일보", "로리더", "신아일보", "시사IN", "시사저널", "경인일보", "경기일보", "중부일보", "인천일보"]
 }
 
 TIER_MAPPER = {
@@ -30,41 +30,45 @@ TIER_MAPPER = {
     "mk.co.kr": ("매일경제", 1), "hankyung.com": ("한국경제", 1), "hani.co.kr": ("한겨레", 1),
     "khan.co.kr": ("경향신문", 1), "kmib.co.kr": ("국민일보", 1), "yna.co.kr": ("연합뉴스", 1),
     "ytn.co.kr": ("YTN", 1), "sbs.co.kr": ("SBS", 1), "kbs.co.kr": ("KBS", 1),
-    "imbc.com": ("MBC", 1), "jtbc.co.kr": ("JTBC", 1),
+    "imbc.com": ("MBC", 1), "jtbc.co.kr": ("JTBC", 1), "kyeongin.com": ("경인일보", 3)
 }
 
 BLACKLIST_DOMAINS = ["blog.naver.com", "tistory.com", "brunch.co.kr", "namu.wiki", "contents.premium.naver.com", "youtube.com", "facebook.com", "instagram.com"]
 
 # --- [유틸리티 함수] ---
 def get_tier_info(url, source_name):
-    """URL과 매체명을 분석하여 정확한 출처와 티어를 반환합니다."""
+    """포털(다음, 네이트 등) 기사의 실제 출처를 찾아 티어를 판정합니다."""
     try:
-        # [우선순위 1] 매체명(source_name) 텍스트를 티어 리스트와 대조
-        # 구글 뉴스에서 준 '동아일보' 같은 텍스트를 바로 티어 판정에 사용
+        # [Step 1] 매체명(source_name) 전처리 및 매칭
+        # 구글/네이버에서 준 텍스트(예: "경인일보")를 티어 리스트와 대조
+        clean_name = str(source_name).split(' - ')[0].strip() # "조선일보 - 네이버뉴스" 형태 대응
+        
         for tier, names in TIER_DATA.items():
             for name in names:
-                if name in source_name:
+                if name in clean_name:
                     return name, tier
         
-        # [우선순위 2] URL 도메인 분석
+        # [Step 2] URL 도메인 분석
         parsed = urllib.parse.urlparse(url)
         domain = parsed.netloc.replace("www.", "").replace("m.", "")
         
-        # 네이트 cpcd 파라미터 분석
-        if "nate.com" in domain:
-            cpcd = urllib.parse.parse_qs(parsed.query).get('cpcd', [''])[0]
-            codes = {"sed": ("서울경제", 2), "chosun": ("조선일보", 1), "joongang": ("중앙일보", 1)}
-            if cpcd in codes: return codes[cpcd]
+        # 포털 사이트인 경우 도메인 대신 source_name을 강제 사용
+        if any(agg in domain for agg in ["daum.net", "nate.com", "google.com", "naver.com"]):
+            # 네이트 cpcd 파라미터가 있다면 우선 적용
+            if "nate.com" in domain:
+                cpcd = urllib.parse.parse_qs(parsed.query).get('cpcd', [''])[0]
+                codes = {"sed": ("서울경제", 2), "chosun": ("조선일보", 1), "joongang": ("중앙일보", 1)}
+                if cpcd in codes: return codes[cpcd]
+            
+            # 포털 이름이 아닌 RSS 제공 매체명이 있다면 반환
+            if clean_name and not any(p in clean_name for p in ["다음", "네이트", "Google", "Naver", "포털"]):
+                return clean_name, 4
         
-        # 도메인 역추적 매핑
+        # [Step 3] 도메인 역추적 매핑
         parts = domain.split('.')
         for i in range(len(parts)):
             sub = ".".join(parts[i:])
             if sub in TIER_MAPPER: return TIER_MAPPER[sub]
-            
-        # [우선순위 3] 구글 뉴스 리다이렉션 도메인일 경우 구글이 준 매체명을 최종 사용
-        if "news.google.com" in domain:
-            return source_name, 4
             
         return domain, 4
     except:
@@ -83,11 +87,8 @@ def extract_professor(title):
 def fetch_news(days):
     try:
         keywords = "경희대 | 경희대학교 | 경희의료원 | 강동경희대학교병원 | 강동경희"
-        # Naver
         n_url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(keywords)}&display=100&sort=date"
         n_res = requests.get(n_url, headers={"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}, timeout=15).json()
-        
-        # Google
         start = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
         g_q = f"(\"경희대\" OR \"경희대학교\") after:{start} " + " ".join([f"-site:{b}" for b in BLACKLIST_DOMAINS])
         g_f = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(g_q)}&hl=ko&gl=KR&ceid=KR:ko")
@@ -96,13 +97,11 @@ def fetch_news(days):
         if 'items' in n_res:
             for item in n_res['items']:
                 if any(b in item['link'] for b in BLACKLIST_DOMAINS): continue
-                # 네이버는 API 응답에 출처가 없으므로 링크 기반으로만 분석
                 name, tier = get_tier_info(item['originallink'], "")
                 temp.append({"title": item['title'].replace("<b>","").replace("</b>",""), "link": item['link'], "source": name, "date": item['pubDate'], "type": "Naver", "tier": tier})
         
         for entry in g_f.entries:
             if not hasattr(entry, 'source') or "Google News" in entry.source.title: continue
-            # [수정] 구글 뉴스 RSS가 제공하는 실제 매체명(entry.source.title)을 적극 활용
             name, tier = get_tier_info(entry.link, entry.source.title)
             temp.append({"title": entry.title, "link": entry.link, "source": name, "date": entry.published, "type": "Google", "tier": tier})
 
@@ -144,7 +143,7 @@ try:
             st.session_state.news_list = fetch_news(days)
         st.caption("※ 유튜브, SNS, 나무위키, 블로그 제외")
         
-        # 선택된 기사 엑셀 추출 버튼
+        # 선택 기사 합산 로직
         selected_to_export = []
         if st.session_state.news_list:
             unique_links = set()
@@ -153,12 +152,12 @@ try:
                     parts = key.split('_')
                     tab_type, idx = parts[1], int(parts[2])
                     
-                    target_list = st.session_state.news_list
-                    if tab_type == "naver": target_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
-                    elif tab_type == "google": target_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
+                    target = st.session_state.news_list
+                    if tab_type == "naver": target = [n for n in st.session_state.news_list if n['type'] == "Naver"]
+                    elif tab_type == "google": target = [n for n in st.session_state.news_list if n['type'] == "Google"]
                     
-                    if idx < len(target_list):
-                        item = target_list[idx]
+                    if idx < len(target):
+                        item = target[idx]
                         if item['link'] not in unique_links:
                             selected_to_export.append({"매체명": item['source'], "기사 제목": item['title'], "저자(교수)": extract_professor(item['title']), "URL": item['link']})
                             unique_links.add(item['link'])
@@ -178,24 +177,19 @@ try:
             with st.expander(f"Tier {tier} 리스트", expanded=False):
                 st.write(", ".join(TIER_DATA[tier]))
 
-    # 뉴스 리스트 출력 (탭 구성)
+    # 뉴스 리스트 출력
     if not st.session_state.news_list:
         st.info("왼쪽 사이드바의 [업데이트] 버튼을 눌러주세요.")
     else:
         n_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
         g_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
         
-        tab_all, tab_naver, tab_google = st.tabs([
-            f"📋 전체 ({len(st.session_state.news_list)})", 
-            f"🟢 네이버 ({len(n_list)})", 
-            f"🔵 구글 ({len(g_list)})"
-        ])
+        tab_all, tab_naver, tab_google = st.tabs([f"📋 전체 ({len(st.session_state.news_list)})", f"🟢 네이버 ({len(n_list)})", f"🔵 구글 ({len(g_list)})"])
         
         def display_tab(news_data, tab_key):
             for i, art in enumerate(news_data):
                 col_check, col_card = st.columns([0.04, 0.96])
-                with col_check:
-                    st.checkbox("", key=f"chk_{tab_key}_{i}")
+                with col_check: st.checkbox("", key=f"chk_{tab_key}_{i}")
                 with col_card:
                     ribbon = "naver-ribbon" if art['type'] == "Naver" else "google-ribbon"
                     badge = "naver-badge" if art['type'] == "Naver" else "google-badge"
