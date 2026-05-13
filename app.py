@@ -19,7 +19,7 @@ NAVER_CLIENT_SECRET = "oPX8YNZK6m"
 if 'news_list' not in st.session_state:
     st.session_state.news_list = []
 
-# --- [고정 데이터: 티어 및 매퍼] ---
+# --- [데이터 정의: 티어 및 매퍼] ---
 TIER_DATA = {
     1: ["조선일보", "중앙일보", "동아일보", "매일경제", "한국경제", "한겨레", "경향신문", "국민일보", "연합뉴스", "YTN", "SBS", "KBS", "MBC", "JTBC"],
     2: ["한국일보", "문화일보", "서울신문", "세계일보", "머니투데이", "서울경제", "뉴시스", "뉴스1", "파이낸셜뉴스", "조선비즈", "이데일리", "한국경제TV", "아시아경제", "연합뉴스TV", "MBN", "채널A", "EBS"],
@@ -65,28 +65,21 @@ def extract_professor(title):
     match = re.search(r'([가-힣]{2,4}\s?교수)', title)
     return match.group(1) if match else "-"
 
-# --- [핵심 수집 함수] ---
 def fetch_news(days):
     try:
         keywords = "경희대 | 경희대학교 | 경희의료원 | 강동경희대학교병원 | 강동경희"
-        # Naver
         n_url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(keywords)}&display=100&sort=date"
         n_res = requests.get(n_url, headers={"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}, timeout=15).json()
-        
-        # Google
         start = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
         g_q = f"(\"경희대\" OR \"경희대학교\") after:{start} " + " ".join([f"-site:{b}" for b in BLACKLIST_DOMAINS])
         g_f = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(g_q)}&hl=ko&gl=KR&ceid=KR:ko")
 
         temp = []
-        # Naver 파싱 안전화
         if 'items' in n_res:
             for item in n_res['items']:
                 if any(b in item['link'] for b in BLACKLIST_DOMAINS): continue
                 name, tier = get_tier_info(item['originallink'], "Naver News")
                 temp.append({"title": item['title'].replace("<b>","").replace("</b>",""), "link": item['link'], "source": name, "date": item['pubDate'], "type": "Naver", "tier": tier})
-        
-        # Google 파싱 안전화
         for entry in g_f.entries:
             if not hasattr(entry, 'source') or "Google News" in entry.source.title: continue
             name, tier = get_tier_info(entry.link, entry.source.title)
@@ -100,14 +93,13 @@ def fetch_news(days):
         final.sort(key=lambda x: (x['tier'], -parse_date(x['date']).timestamp()))
         return final
     except Exception as e:
-        st.error(f"데이터 수집 중 오류 발생: {e}")
+        st.error(f"수집 오류: {e}")
         return []
 
-# --- [UI 메인 실행] ---
+# --- [UI 시작] ---
 try:
     st.title("경희대학교 및 의료기관 뉴스 클리핑")
 
-    # CSS
     st.markdown("""
         <style>
         .news-card { background-color: white; padding: 15px; border-radius: 0 0 10px 10px; border-left: 6px solid #bdc3c7; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.07); }
@@ -124,35 +116,73 @@ try:
         </style>
         """, unsafe_allow_html=True)
 
+    # 사이드바 레이아웃
     with st.sidebar:
         st.header("⚙️ 컨트롤 타워")
         days = st.slider("조회 기간 (일)", 1, 7, 3)
         if st.button("🔄 실시간 데이터 업데이트", use_container_width=True):
             st.session_state.news_list = fetch_news(days)
+        st.caption("※ 유튜브, SNS, 나무위키, 블로그 제외")
         
+        # [UX 개선] 엑셀 다운로드 버튼을 티어 정보 위로 배치
+        # 현재 선택된 기사가 있는지 세션 상태를 확인하여 동적으로 표시
+        selected_to_export = []
+        if st.session_state.news_list:
+            # 모든 탭의 체크박스 상태를 취합 (chk_all_, chk_naver_, chk_google_ 키 확인)
+            unique_links = set()
+            for key, value in st.session_state.items():
+                if key.startswith("chk_") and value:
+                    # 키에서 인덱스와 탭 종류 추출 (예: chk_all_0)
+                    parts = key.split('_')
+                    tab_type = parts[1]
+                    idx = int(parts[2])
+                    
+                    # 탭 종류에 따른 원본 데이터 접근
+                    target_list = st.session_state.news_list
+                    if tab_type == "naver": target_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
+                    elif tab_type == "google": target_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
+                    
+                    if idx < len(target_list):
+                        item = target_list[idx]
+                        if item['link'] not in unique_links:
+                            selected_to_export.append({
+                                "매체명": item['source'], "기사 제목": item['title'],
+                                "저자(교수)": extract_professor(item['title']), "URL": item['link']
+                            })
+                            unique_links.add(item['link'])
+
+        if selected_to_export:
+            st.divider()
+            st.subheader(f"📥 {len(selected_to_export)}개 선택됨")
+            df = pd.DataFrame(selected_to_export)
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False)
+            
+            st.download_button(
+                label="엑셀 파일 다운로드", data=output.getvalue(),
+                file_name=f"KHU_News_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
         st.divider()
         st.header("📊 매체 등급 정보")
         for tier in [1, 2, 3]:
             with st.expander(f"Tier {tier} 리스트", expanded=False):
                 st.write(", ".join(TIER_DATA[tier]))
 
-    # 뉴스 출력부
+    # 메인 뉴스 리스트 출력
     if not st.session_state.news_list:
         st.info("왼쪽 사이드바의 [업데이트] 버튼을 눌러주세요.")
     else:
         tab_all, tab_naver, tab_google = st.tabs(["📋 전체 보기", "🟢 네이버 뉴스", "🔵 구글 뉴스"])
         
-        def display_news(news_data, tab_key):
-            selected_data = []
+        def display_news_tab(news_data, tab_key):
             for i, art in enumerate(news_data):
                 col_check, col_card = st.columns([0.04, 0.96])
                 with col_check:
-                    is_selected = st.checkbox("", key=f"chk_{tab_key}_{i}")
-                    if is_selected:
-                        selected_data.append({
-                            "매체명": art['source'], "기사 제목": art['title'],
-                            "저자(교수)": extract_professor(art['title']), "URL": art['link']
-                        })
+                    st.checkbox("", key=f"chk_{tab_key}_{i}")
                 with col_card:
                     ribbon = "naver-ribbon" if art['type'] == "Naver" else "google-ribbon"
                     badge = "naver-badge" if art['type'] == "Naver" else "google-badge"
@@ -167,34 +197,14 @@ try:
                             </div>
                         </div>
                     """, unsafe_allow_html=True)
-            return selected_data
 
-        with tab_all: selected_all = display_news(st.session_state.news_list, "all")
-        with tab_naver:
-            naver_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
-            selected_naver = display_news(naver_list, "naver")
-        with tab_google:
-            google_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
-            selected_google = display_news(google_list, "google")
-
-        final_sel = {v['URL']: v for v in (selected_all + selected_naver + selected_google)}.values()
-
-        if final_sel:
-            st.sidebar.subheader(f"📥 {len(final_sel)}개 선택됨")
-            df = pd.DataFrame(final_sel)
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False)
-            st.sidebar.download_button(
-                label="엑셀 파일 다운로드", data=output.getvalue(),
-                file_name=f"KHU_News_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
+        with tab_all: display_news_tab(st.session_state.news_list, "all")
+        with tab_naver: display_news_tab([n for n in st.session_state.news_list if n['type'] == "Naver"], "naver")
+        with tab_google: display_news_tab([n for n in st.session_state.news_list if n['type'] == "Google"], "google")
 
     st.divider()
     st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
 
 except Exception as main_e:
-    st.error("앱 실행 중 치명적인 오류가 발생했습니다.")
-    st.code(traceback.format_exc()) # 실제 에러 트레이스백을 화면에 출력
+    st.error("치명적 오류 발생")
+    st.code(traceback.format_exc())
