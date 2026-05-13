@@ -6,6 +6,7 @@ from io import BytesIO
 from datetime import datetime, date, timedelta
 import urllib.parse
 import re
+import traceback
 
 # 1. 페이지 설정
 st.set_page_config(page_title="경희대학교 및 의료기관 뉴스 클리핑", page_icon="🏫", layout="wide")
@@ -14,10 +15,11 @@ st.set_page_config(page_title="경희대학교 및 의료기관 뉴스 클리핑
 NAVER_CLIENT_ID = "_FNNM0QDYA8u84RC8qFE" 
 NAVER_CLIENT_SECRET = "oPX8YNZK6m"
 
+# 세션 상태 초기화
 if 'news_list' not in st.session_state:
     st.session_state.news_list = []
 
-# --- [데이터 정의: 티어 및 매퍼] ---
+# --- [고정 데이터: 티어 및 매퍼] ---
 TIER_DATA = {
     1: ["조선일보", "중앙일보", "동아일보", "매일경제", "한국경제", "한겨레", "경향신문", "국민일보", "연합뉴스", "YTN", "SBS", "KBS", "MBC", "JTBC"],
     2: ["한국일보", "문화일보", "서울신문", "세계일보", "머니투데이", "서울경제", "뉴시스", "뉴스1", "파이낸셜뉴스", "조선비즈", "이데일리", "한국경제TV", "아시아경제", "연합뉴스TV", "MBN", "채널A", "EBS"],
@@ -51,7 +53,7 @@ def get_tier_info(url, source_name):
             sub = ".".join(parts[i:])
             if sub in TIER_MAPPER: return TIER_MAPPER[sub]
         return domain, 4
-    except: return source_name, 4
+    except: return str(source_name), 4
 
 def parse_date(date_str):
     for fmt in ['%a, %d %b %Y %H:%M:%S %z', '%a, %d %b %Y %H:%M:%S GMT', '%Y-%m-%d %H:%M:%S']:
@@ -63,23 +65,136 @@ def extract_professor(title):
     match = re.search(r'([가-힣]{2,4}\s?교수)', title)
     return match.group(1) if match else "-"
 
-# --- [뉴스 수집 로직] ---
+# --- [핵심 수집 함수] ---
 def fetch_news(days):
-    keywords = "경희대 | 경희대학교 | 경희의료원 | 강동경희대학교병원 | 강동경희"
-    n_url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(keywords)}&display=100&sort=date"
-    n_res = requests.get(n_url, headers={"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}, timeout=10).json()
-    start = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
-    g_q = f"(\"경희대\" OR \"경희대학교\") after:{start} " + " ".join([f"-site:{b}" for b in BLACKLIST_DOMAINS])
-    g_f = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(g_q)}&hl=ko&gl=KR&ceid=KR:ko")
+    try:
+        keywords = "경희대 | 경희대학교 | 경희의료원 | 강동경희대학교병원 | 강동경희"
+        # Naver
+        n_url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(keywords)}&display=100&sort=date"
+        n_res = requests.get(n_url, headers={"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}, timeout=15).json()
+        
+        # Google
+        start = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
+        g_q = f"(\"경희대\" OR \"경희대학교\") after:{start} " + " ".join([f"-site:{b}" for b in BLACKLIST_DOMAINS])
+        g_f = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(g_q)}&hl=ko&gl=KR&ceid=KR:ko")
 
-    temp = []
-    for item in n_res.get('items', []):
-        if any(b in item['link'] for b in BLACKLIST_DOMAINS): continue
-        name, tier = get_tier_info(item['originallink'], "Naver News")
-        temp.append({"title": item['title'].replace("<b>","").replace("</b>",""), "link": item['link'], "source": name, "date": item['pubDate'], "type": "Naver", "tier": tier})
-    for entry in g_f.entries:
-        if "Google News" in entry.source.title: continue
-        name, tier = get_tier_info(entry.link, entry.source.title)
-        temp.append({"title": entry.title, "link": entry.link, "source": name, "date": entry.published, "type": "Google", "tier": tier})
+        temp = []
+        # Naver 파싱 안전화
+        if 'items' in n_res:
+            for item in n_res['items']:
+                if any(b in item['link'] for b in BLACKLIST_DOMAINS): continue
+                name, tier = get_tier_info(item['originallink'], "Naver News")
+                temp.append({"title": item['title'].replace("<b>","").replace("</b>",""), "link": item['link'], "source": name, "date": item['pubDate'], "type": "Naver", "tier": tier})
+        
+        # Google 파싱 안전화
+        for entry in g_f.entries:
+            if not hasattr(entry, 'source') or "Google News" in entry.source.title: continue
+            name, tier = get_tier_info(entry.link, entry.source.title)
+            temp.append({"title": entry.title, "link": entry.link, "source": name, "date": entry.published, "type": "Google", "tier": tier})
 
-    seen, final = set(), []
+        seen, final = set(), []
+        for c in temp:
+            if c['title'][:20] not in seen:
+                final.append(c)
+                seen.add(c['title'][:20])
+        final.sort(key=lambda x: (x['tier'], -parse_date(x['date']).timestamp()))
+        return final
+    except Exception as e:
+        st.error(f"데이터 수집 중 오류 발생: {e}")
+        return []
+
+# --- [UI 메인 실행] ---
+try:
+    st.title("경희대학교 및 의료기관 뉴스 클리핑")
+
+    # CSS
+    st.markdown("""
+        <style>
+        .news-card { background-color: white; padding: 15px; border-radius: 0 0 10px 10px; border-left: 6px solid #bdc3c7; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.07); }
+        .source-ribbon { height: 5px; border-radius: 10px 10px 0 0; margin-bottom: -5px; }
+        .naver-ribbon { background-color: #03cf5d; }
+        .google-ribbon { background-color: #4285f4; }
+        .tier-1 { border-left-color: #d32f2f !important; }
+        .tier-2 { border-left-color: #f39c12 !important; }
+        .tier-3 { border-left-color: #3498db !important; }
+        .badge { padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; color: white; display: inline-block; margin-bottom: 8px; }
+        .naver-badge { background-color: #03cf5d; }
+        .google-badge { background-color: #4285f4; }
+        .press-label { color: #d32f2f; font-weight: bold; font-size: 15px; }
+        </style>
+        """, unsafe_allow_html=True)
+
+    with st.sidebar:
+        st.header("⚙️ 컨트롤 타워")
+        days = st.slider("조회 기간 (일)", 1, 7, 3)
+        if st.button("🔄 실시간 데이터 업데이트", use_container_width=True):
+            st.session_state.news_list = fetch_news(days)
+        
+        st.divider()
+        st.header("📊 매체 등급 정보")
+        for tier in [1, 2, 3]:
+            with st.expander(f"Tier {tier} 리스트", expanded=False):
+                st.write(", ".join(TIER_DATA[tier]))
+
+    # 뉴스 출력부
+    if not st.session_state.news_list:
+        st.info("왼쪽 사이드바의 [업데이트] 버튼을 눌러주세요.")
+    else:
+        tab_all, tab_naver, tab_google = st.tabs(["📋 전체 보기", "🟢 네이버 뉴스", "🔵 구글 뉴스"])
+        
+        def display_news(news_data, tab_key):
+            selected_data = []
+            for i, art in enumerate(news_data):
+                col_check, col_card = st.columns([0.04, 0.96])
+                with col_check:
+                    is_selected = st.checkbox("", key=f"chk_{tab_key}_{i}")
+                    if is_selected:
+                        selected_data.append({
+                            "매체명": art['source'], "기사 제목": art['title'],
+                            "저자(교수)": extract_professor(art['title']), "URL": art['link']
+                        })
+                with col_card:
+                    ribbon = "naver-ribbon" if art['type'] == "Naver" else "google-ribbon"
+                    badge = "naver-badge" if art['type'] == "Naver" else "google-badge"
+                    t_class = f"tier-{art['tier']}" if art['tier'] < 4 else ""
+                    st.markdown(f"""
+                        <div class="source-ribbon {ribbon}"></div>
+                        <div class="news-card {t_class}">
+                            <div class="badge {badge}">{art['type']} | Tier {art['tier']}</div>
+                            <h4 style="margin:5px 0;"><a href="{art['link']}" target="_blank" style="text-decoration:none; color:#1a1a1a;">{art['title']}</a></h4>
+                            <div style="font-size:13px; color:#666;">
+                                <span class="press-label">{art['source']}</span> | {parse_date(art['date']).strftime('%Y-%m-%d %H:%M')}
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+            return selected_data
+
+        with tab_all: selected_all = display_news(st.session_state.news_list, "all")
+        with tab_naver:
+            naver_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
+            selected_naver = display_news(naver_list, "naver")
+        with tab_google:
+            google_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
+            selected_google = display_news(google_list, "google")
+
+        final_sel = {v['URL']: v for v in (selected_all + selected_naver + selected_google)}.values()
+
+        if final_sel:
+            st.sidebar.subheader(f"📥 {len(final_sel)}개 선택됨")
+            df = pd.DataFrame(final_sel)
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False)
+            st.sidebar.download_button(
+                label="엑셀 파일 다운로드", data=output.getvalue(),
+                file_name=f"KHU_News_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+    st.divider()
+    st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
+
+except Exception as main_e:
+    st.error("앱 실행 중 치명적인 오류가 발생했습니다.")
+    st.code(traceback.format_exc()) # 실제 에러 트레이스백을 화면에 출력
