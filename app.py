@@ -17,7 +17,7 @@ NAVER_CLIENT_SECRET = "oPX8YNZK6m"
 if 'news_list' not in st.session_state:
     st.session_state.news_list = []
 
-# --- [매체 티어 데이터] ---
+# --- [데이터 정의: 티어 및 매퍼] ---
 TIER_DATA = {
     1: ["조선일보", "중앙일보", "동아일보", "매일경제", "한국경제", "한겨레", "경향신문", "국민일보", "연합뉴스", "YTN", "SBS", "KBS", "MBC", "JTBC"],
     2: ["한국일보", "문화일보", "서울신문", "세계일보", "머니투데이", "서울경제", "뉴시스", "뉴스1", "파이낸셜뉴스", "조선비즈", "이데일리", "한국경제TV", "아시아경제", "연합뉴스TV", "MBN", "채널A", "EBS"],
@@ -34,7 +34,7 @@ TIER_MAPPER = {
 
 BLACKLIST_DOMAINS = ["blog.naver.com", "tistory.com", "brunch.co.kr", "namu.wiki", "contents.premium.naver.com", "youtube.com", "facebook.com", "instagram.com"]
 
-# --- [유틸리티] ---
+# --- [유틸리티 함수] ---
 def get_tier_info(url, source_name):
     try:
         parsed = urllib.parse.urlparse(url)
@@ -63,7 +63,7 @@ def extract_professor(title):
     match = re.search(r'([가-힣]{2,4}\s?교수)', title)
     return match.group(1) if match else "-"
 
-# --- [뉴스 수집] ---
+# --- [뉴스 수집 로직] ---
 def fetch_news(days):
     keywords = "경희대 | 경희대학교 | 경희의료원 | 강동경희대학교병원 | 강동경희"
     n_url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(keywords)}&display=100&sort=date"
@@ -83,109 +83,3 @@ def fetch_news(days):
         temp.append({"title": entry.title, "link": entry.link, "source": name, "date": entry.published, "type": "Google", "tier": tier})
 
     seen, final = set(), []
-    for c in temp:
-        if c['title'][:20] not in seen:
-            final.append(c)
-            seen.add(c['title'][:20])
-    final.sort(key=lambda x: (x['tier'], -parse_date(x['date']).timestamp()))
-    return final
-
-# --- [UI 디자인] ---
-st.title("경희대학교 및 의료기관 뉴스 클리핑")
-
-# CSS: 시인성 및 레이아웃 최적화
-st.markdown("""
-    <style>
-    .news-card { background-color: white; padding: 15px; border-radius: 0 0 10px 10px; border-left: 6px solid #bdc3c7; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.07); }
-    .source-ribbon { height: 5px; border-radius: 10px 10px 0 0; margin-bottom: -5px; }
-    .naver-ribbon { background-color: #03cf5d; }
-    .google-ribbon { background-color: #4285f4; }
-    .tier-1 { border-left-color: #d32f2f !important; }
-    .tier-2 { border-left-color: #f39c12 !important; }
-    .tier-3 { border-left-color: #3498db !important; }
-    .badge { padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; color: white; display: inline-block; margin-bottom: 8px; }
-    .naver-badge { background-color: #03cf5d; }
-    .google-badge { background-color: #4285f4; }
-    .press-label { color: #d32f2f; font-weight: bold; font-size: 15px; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- [사이드바 구성: 티어 정보 복구] ---
-with st.sidebar:
-    st.header("📊 매체 등급 정보")
-    for tier in [1, 2, 3]:
-        with st.expander(f"Tier {tier} 리스트", expanded=True):
-            st.write(", ".join(TIER_DATA[tier]))
-    
-    st.divider()
-    st.header("⚙️ 컨트롤 타워")
-    days = st.slider("조회 기간 (일)", 1, 7, 3)
-    if st.button("🔄 실시간 데이터 업데이트", use_container_width=True):
-        st.session_state.news_list = fetch_news(days)
-    
-    st.caption("※ 유튜브, SNS, 나무위키, 블로그 제외")
-    st.divider()
-
-# --- [메인 리스트 및 탭 구성] ---
-if not st.session_state.news_list:
-    st.info("왼쪽 사이드바의 [업데이트] 버튼을 눌러주세요.")
-else:
-    tab_all, tab_naver, tab_google = st.tabs(["📋 전체 보기", "🟢 네이버 뉴스", "🔵 구글 뉴스"])
-    
-    def display_news(news_data, tab_key):
-        selected_data = []
-        for i, art in enumerate(news_data):
-            col_check, col_card = st.columns([0.04, 0.96])
-            with col_check:
-                is_selected = st.checkbox("", key=f"chk_{tab_key}_{i}")
-                if is_selected:
-                    selected_data.append({
-                        "매체명": art['source'], "기사 제목": art['title'],
-                        "저자(교수)": extract_professor(art['title']), "URL": art['link']
-                    })
-            
-            with col_card:
-                ribbon_type = "naver-ribbon" if art['type'] == "Naver" else "google-ribbon"
-                badge_type = "naver-badge" if art['type'] == "Naver" else "google-badge"
-                t_class = f"tier-{art['tier']}" if art['tier'] < 4 else ""
-                st.markdown(f"""
-                    <div class="source-ribbon {ribbon_type}"></div>
-                    <div class="news-card {t_class}">
-                        <div class="badge {badge_type}">{art['type']} | Tier {art['tier']}</div>
-                        <h4 style="margin:5px 0;"><a href="{art['link']}" target="_blank" style="text-decoration:none; color:#1a1a1a;">{art['title']}</a></h4>
-                        <div style="font-size:13px; color:#666;">
-                            <span class="press-label">{art['source']}</span> | {parse_date(art['date']).strftime('%Y-%m-%d %H:%M')}
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-        return selected_data
-
-    with tab_all:
-        selected_all = display_news(st.session_state.news_list, "all")
-    with tab_naver:
-        naver_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
-        selected_naver = display_news(naver_list, "naver")
-    with tab_google:
-        google_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
-        selected_google = display_news(google_list, "google")
-
-    # 선택 기사 합산 및 엑셀 다운로드
-    final_selected = {v['URL']: v for v in (selected_all + selected_naver + selected_google)}.values()
-
-    if final_selected:
-        st.sidebar.subheader(f"📥 {len(final_selected)}개 선택됨")
-        df = pd.DataFrame(final_selected)
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
-        
-        st.sidebar.download_button(
-            label="엑셀 파일 다운로드",
-            data=output.getvalue(),
-            file_name=f"KHU_News_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-
-st.divider()
-st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
