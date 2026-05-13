@@ -15,15 +15,17 @@ def get_khu_news():
     yesterday = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
     tomorrow = (date.today() + timedelta(days=1)).strftime('%Y-%m-%d')
     
-    # 5개 핵심 키워드 조합 (OR 연산자 사용)
     keywords = ["경희대", "경희대학교", "경희의료원", "강동경희대학교병원", "강동경희"]
     keyword_query = " OR ".join(keywords)
     
-    # 최종 쿼리 구성
-    query = f"({keyword_query}) after:{yesterday} before:{tomorrow}"
+    # [수정] 노이즈가 많은 사이트들을 제외하여 메이저 언론사 노출 확률을 높임
+    # 실무적으로 불필요한 홍보성 매체들을 제외 연산자(-)로 걸러냅니다.
+    noise_filter = "-site:v.daum.net -site:blog.me -site:tistory.com -site:cafe.naver.com"
+    
+    # 최종 쿼리: 키워드 + 날짜 + 노이즈 필터
+    query = f"({keyword_query}) after:{yesterday} before:{tomorrow} {noise_filter}"
     encoded_query = urllib.parse.quote(query)
     
-    # 구글 뉴스 RSS URL (한국 설정)
     rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
     
     feed = feedparser.parse(rss_url)
