@@ -26,65 +26,60 @@ TIER_DATA = {
     3: ["헤럴드경제", "전자신문", "오마이뉴스", "머니S", "매일신문", "아이뉴스24", "프레시안", "부산일보", "더팩트", "노컷뉴스", "블로터", "미디어오늘", "디지털데일리", "조세일보", "디지털타임스", "SBS Biz", "데일리안", "TV조선", "강원일보", "코리아헤럴드", "쿠키뉴스", "KTV", "IT동아", "한의신문", "민족의학신문", "매일일보", "로리더", "신아일보", "시사IN", "시사저널", "경인일보", "스포츠동아", "스포츠조선", "스포츠서울", "일간스포츠"]
 }
 
+# 도메인 매퍼 (v.daum.net 제외)
 TIER_MAPPER = {
     "chosun.com": ("조선일보", 1), "joongang.co.kr": ("중앙일보", 1), "donga.com": ("동아일보", 1),
     "mk.co.kr": ("매일경제", 1), "hankyung.com": ("한국경제", 1), "hani.co.kr": ("한겨레", 1),
     "khan.co.kr": ("경향신문", 1), "kmib.co.kr": ("국민일보", 1), "yna.co.kr": ("연합뉴스", 1),
     "ytn.co.kr": ("YTN", 1), "sbs.co.kr": ("SBS", 1), "kbs.co.kr": ("KBS", 1),
     "imbc.com": ("MBC", 1), "jtbc.co.kr": ("JTBC", 1),
-    "munhwa.com": ("문화일보", 2), "newsis.com": ("뉴시스", 2), "news1.kr": ("뉴스1", 2),
-    "ohmynews.com": ("오마이뉴스", 3), "kyeongin.com": ("경인일보", 3)
+    "munhwa.com": ("문화일보", 2), "newsis.com": ("뉴시스", 2), "news1.kr": ("뉴스1", 2)
 }
 
 CP_CODE_MAPPER = {
     "nws": ("뉴시스", 2), "newsis": ("뉴시스", 2), "news1": ("뉴스1", 2),
-    "spo": ("스포츠동아", 3), "chosun_s": ("스포츠조선", 3), "ss": ("스포츠서울", 3),
     "sed": ("서울경제", 2), "mk": ("매일경제", 1), "chosun": ("조선일보", 1),
-    "joongang": ("중앙일보", 1), "donga": ("동아일보", 1), "yna": ("연합뉴스", 1),
-    "edaily": ("이데일리", 2), "mt": ("머니투데이", 2)
+    "joongang": ("중앙일보", 1), "yna": ("연합뉴스", 1)
 }
 
-BLACKLIST_DOMAINS = [
-    "blog.naver.com", "tistory.com", "brunch.co.kr", "egloos.com", 
-    "contents.premium.naver.com", "namu.wiki", "youtube.com", 
-    "facebook.com", "instagram.com", "k-club.kird.re.kr"
-]
+BLACKLIST_DOMAINS = ["blog.naver.com", "tistory.com", "brunch.co.kr", "egloos.com", "namu.wiki", "youtube.com", "k-club.kird.re.kr"]
 
 # --- [유틸리티 함수] ---
 def get_tier_info(url, source_name, title=""):
+    """
+    매체명과 티어를 결정하는 핵심 로직
+    """
     try:
-        # 1. 제목에서 매체명 추출 시도 (예: "기사제목 - 중앙일보")
+        # 1. 타이틀에서 매체명 강제 추출 (구글 RSS 특성 활용)
+        # 예: "경희대, 신규 사업 선정 - 조선일보" -> "조선일보"
         title_source = ""
         if " - " in title:
             title_source = title.split(" - ")[-1].strip()
+
+        # 2. 다음 뉴스(v.daum.net)인 경우 처리 강화
+        # source_name이 'v.daum.net'이거나 비어있으면 제목에서 추출한 title_source를 우선 사용
+        final_source_candidate = source_name if source_name and "daum.net" not in source_name else title_source
+
+        # 3. TIER_DATA 기반 매칭 (이름이 포함되어 있는지 확인)
+        for tier, names in TIER_DATA.items():
+            for name in names:
+                if name in final_source_candidate:
+                    return name, tier
         
-        # 2. URL 파라미터 기반 (네이버 등)
+        # 4. URL 기반 분석 (네이버 CP 코드 등)
         parsed = urllib.parse.urlparse(url)
         params = urllib.parse.parse_qs(parsed.query)
         cpcd = params.get('cpcd', [None])[0]
         if cpcd and cpcd in CP_CODE_MAPPER: return CP_CODE_MAPPER[cpcd]
 
-        # 3. 매체 리스트 기반 매칭
-        target_name = str(source_name).split(' - ')[0].strip()
-        # 다음 뉴스 등 source_name이 URL로 들어오는 경우 방지
-        if "daum.net" in target_name or not target_name:
-            target_name = title_source
-
-        for tier, names in TIER_DATA.items():
-            for name in names:
-                if name in target_name or (title_source and name in title_source):
-                    return name, tier
-        
-        # 4. 도메인 기반 매칭
+        # 5. 도메인 기반 분석
         domain = parsed.netloc.replace("www.", "").replace("m.", "")
-        parts = domain.split('.')
-        for i in range(len(parts)):
-            sub = ".".join(parts[i:])
-            if sub in TIER_MAPPER: return TIER_MAPPER[sub]
+        for sub_domain, info in TIER_MAPPER.items():
+            if sub_domain in domain: return info
             
-        # 5. 최종 결정
-        final_name = target_name if target_name and "daum.net" not in target_name else "기타매체"
-        return final_name, 4
+        # 6. 결과가 없으면 추출된 이름 사용 또는 기타매체
+        res_name = final_source_candidate if final_source_candidate else "기타매체"
+        return res_name, 4
     except: return "출처 확인 불가", 4
 
 def parse_date(date_str):
@@ -113,7 +108,7 @@ def fetch_news(days):
                 name, tier = get_tier_info(item['originallink'], "", t_clean)
                 temp.append({"title": t_clean, "link": item['link'], "source": name, "date": item['pubDate'], "type": "Naver", "tier": tier})
 
-        # 2. 구글 수집 (다음 도메인 제외)
+        # 2. 구글 수집 (다음 제외)
         g_blacklist = BLACKLIST_DOMAINS + ["v.daum.net", "news.daum.net"]
         g_q = f"(\"경희대\" OR \"경희대학교\") after:{start_date} " + " ".join([f"-site:{b}" for b in g_blacklist])
         g_f = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(g_q)}&hl=ko&gl=KR&ceid=KR:ko")
@@ -122,28 +117,15 @@ def fetch_news(days):
             name, tier = get_tier_info(entry.link, s_name, entry.title)
             temp.append({"title": entry.title, "link": entry.link, "source": name, "date": entry.published, "type": "Google", "tier": tier})
 
-        # 3. 다음 수집 (구글 RSS의 site:daum.net 기능을 빌려와서 매체명 정제)
+        # 3. 다음 수집
         d_q = f"(\"경희대\" OR \"경희대학교\") site:daum.net after:{start_date}"
         d_f = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(d_q)}&hl=ko&gl=KR&ceid=KR:ko")
         for entry in d_f.entries:
-            # 다음 뉴스 제목 예: "기사제목 - 매체명" 형태가 많음
-            full_title = entry.title
             s_name = entry.source.title if hasattr(entry, 'source') else ""
-            
-            # get_tier_info에서 제목의 " - 매체명" 부분을 찢어서 처리함
-            name, tier = get_tier_info(entry.link, s_name, full_title)
-            
-            # 출력용 제목에서 " - 매체명" 제거하여 깔끔하게 보이기
-            display_title = full_title.split(" - ")[0] if " - " in full_title else full_title
-            
-            temp.append({
-                "title": display_title, 
-                "link": entry.link, 
-                "source": name, 
-                "date": entry.published, 
-                "type": "Daum", 
-                "tier": tier
-            })
+            name, tier = get_tier_info(entry.link, s_name, entry.title)
+            # 출력용 제목 정제 (뒤의 매체명 제거)
+            d_title = entry.title.split(" - ")[0] if " - " in entry.title else entry.title
+            temp.append({"title": d_title, "link": entry.link, "source": name, "date": entry.published, "type": "Daum", "tier": tier})
 
         # 중복 제거
         seen, final = set(), []
@@ -186,8 +168,8 @@ try:
         days = st.slider("조회 기간 (일)", 1, 7, 3)
         if st.button("🔄 실시간 데이터 업데이트", use_container_width=True):
             st.session_state.news_list = fetch_news(days)
-        st.caption("※ 유튜브, SNS, 나무위키, 블로그, K-Club 제외")
         
+        # 엑셀 다운로드 로직
         selected_to_export = []
         if st.session_state.news_list:
             unique_links = set()
@@ -195,13 +177,12 @@ try:
                 if key.startswith("chk_") and value:
                     parts = key.split('_')
                     t_type, idx = parts[1], int(parts[2])
-                    
+                    target = []
                     if t_type == "all": target = st.session_state.news_list
                     elif t_type == "naver": target = [n for n in st.session_state.news_list if n['type'] == "Naver"]
                     elif t_type == "google": target = [n for n in st.session_state.news_list if n['type'] == "Google"]
                     elif t_type == "daum": target = [n for n in st.session_state.news_list if n['type'] == "Daum"]
-                    else: target = []
-
+                    
                     if idx < len(target):
                         item = target[idx]
                         if item['link'] not in unique_links:
@@ -210,12 +191,11 @@ try:
 
         if selected_to_export:
             st.divider()
-            st.subheader(f"📥 {len(selected_to_export)}개 선택됨")
             df_ex = pd.DataFrame(selected_to_export)
             out = BytesIO()
             with pd.ExcelWriter(out, engine='openpyxl') as writer:
                 df_ex.to_excel(writer, index=False)
-            st.download_button(label="엑셀 파일 다운로드", data=out.getvalue(), file_name=f"KHU_News_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            st.download_button(label=f"📥 {len(selected_to_export)}개 엑셀 다운로드", data=out.getvalue(), file_name=f"KHU_News_{date.today()}.xlsx", use_container_width=True)
 
         st.divider()
         st.header("📊 매체 등급 정보")
@@ -224,23 +204,15 @@ try:
                 st.write(", ".join(TIER_DATA[tier_num]))
 
     if not st.session_state.news_list:
-        st.info("왼쪽 사이드바의 [업데이트] 버튼을 눌러주세요.")
+        st.info("데이터를 업데이트해 주세요.")
     else:
         n_list = [n for n in st.session_state.news_list if n['type'] == "Naver"]
         g_list = [n for n in st.session_state.news_list if n['type'] == "Google"]
         d_list = [n for n in st.session_state.news_list if n['type'] == "Daum"]
         
-        tab_all, tab_naver, tab_daum, tab_google = st.tabs([
-            f"📋 전체 ({len(st.session_state.news_list)})", 
-            f"🟢 네이버 ({len(n_list)})", 
-            f"🟡 다음 ({len(d_list)})",
-            f"🔵 구글 ({len(g_list)})"
-        ])
+        tab_all, tab_naver, tab_daum, tab_google = st.tabs([f"📋 전체 ({len(st.session_state.news_list)})", f"🟢 네이버 ({len(n_list)})", f"🟡 다음 ({len(d_list)})", f"🔵 구글 ({len(g_list)})"])
         
         def display_tab(news_data, tab_key):
-            if not news_data:
-                st.write("수집된 뉴스가 없습니다.")
-                return
             for i, art in enumerate(news_data):
                 col_check, col_card = st.columns([0.04, 0.96])
                 with col_check: st.checkbox("", key=f"chk_{tab_key}_{i}")
@@ -262,9 +234,6 @@ try:
         with tab_daum: display_tab(d_list, "daum")
         with tab_google: display_tab(g_list, "google")
 
-    st.divider()
-    st.caption(f"Last updated: {date.today()} | Managed by Seunghoon")
-
-except Exception as main_e:
-    st.error("앱 실행 중 오류 발생")
+except Exception as e:
+    st.error("오류 발생")
     st.code(traceback.format_exc())
