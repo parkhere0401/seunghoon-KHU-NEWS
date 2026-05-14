@@ -11,7 +11,7 @@ import traceback
 # 1. 페이지 설정
 st.set_page_config(page_title="경희대학교 및 의료기관 뉴스 클리핑", page_icon="🏫", layout="wide")
 
-# API 키 (유지)
+# API 키 (기존 키 유지)
 NAVER_CLIENT_ID = "_FNNM0QDYA8u84RC8qFE" 
 NAVER_CLIENT_SECRET = "oPX8YNZK6m"
 
@@ -47,33 +47,43 @@ CP_CODE_MAPPER = {
 BLACKLIST_DOMAINS = [
     "blog.naver.com", "tistory.com", "brunch.co.kr", "egloos.com", 
     "contents.premium.naver.com", "namu.wiki", "youtube.com", 
-    "facebook.com", "instagram.com", "k-club.kird.re.kr",
-    "news.daum.net", "v.daum.net" # 구글 결과에서 다음 뉴스 제외를 위해 추가
+    "facebook.com", "instagram.com", "k-club.kird.re.kr"
 ]
 
 # --- [유틸리티 함수] ---
 def get_tier_info(url, source_name, title=""):
     try:
+        # 1. 제목에서 매체명 추출 시도 (예: "기사제목 - 중앙일보")
+        title_source = ""
+        if " - " in title:
+            title_source = title.split(" - ")[-1].strip()
+        
+        # 2. URL 파라미터 기반 (네이버 등)
         parsed = urllib.parse.urlparse(url)
         params = urllib.parse.parse_qs(parsed.query)
         cpcd = params.get('cpcd', [None])[0]
         if cpcd and cpcd in CP_CODE_MAPPER: return CP_CODE_MAPPER[cpcd]
 
-        title_source = title.split(" - ")[-1].strip() if " - " in title else ""
+        # 3. 매체 리스트 기반 매칭
         target_name = str(source_name).split(' - ')[0].strip()
-        search_target = f"{target_name} {title_source}".strip()
+        # 다음 뉴스 등 source_name이 URL로 들어오는 경우 방지
+        if "daum.net" in target_name or not target_name:
+            target_name = title_source
 
         for tier, names in TIER_DATA.items():
             for name in names:
-                if name in search_target: return name, tier
+                if name in target_name or (title_source and name in title_source):
+                    return name, tier
         
+        # 4. 도메인 기반 매칭
         domain = parsed.netloc.replace("www.", "").replace("m.", "")
         parts = domain.split('.')
         for i in range(len(parts)):
             sub = ".".join(parts[i:])
             if sub in TIER_MAPPER: return TIER_MAPPER[sub]
             
-        final_name = title_source if title_source and title_source != "네이트" else (target_name if target_name else domain)
+        # 5. 최종 결정
+        final_name = target_name if target_name and "daum.net" not in target_name else "기타매체"
         return final_name, 4
     except: return "출처 확인 불가", 4
 
@@ -91,6 +101,7 @@ def fetch_news(days):
     try:
         keywords = "경희대 | 경희대학교 | 경희의료원 | 강동경희대학교병원 | 강동경희"
         temp = []
+        start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
         
         # 1. 네이버 수집
         n_url = f"https://openapi.naver.com/v1/search/news.json?query={urllib.parse.quote(keywords)}&display=100&sort=date"
@@ -102,31 +113,39 @@ def fetch_news(days):
                 name, tier = get_tier_info(item['originallink'], "", t_clean)
                 temp.append({"title": t_clean, "link": item['link'], "source": name, "date": item['pubDate'], "type": "Naver", "tier": tier})
 
-        # 2. 다음 수집 (RSS)
-        d_q = "경희대학교" # 다음은 단순 키워드로 검색
-        d_f = feedparser.parse(f"https://search.daum.net/search?w=news&nil_search=btn&DA=STC&enc=utf8&cluster=y&cluster_page=1&q={urllib.parse.quote(d_q)}&sort=recency")
-        # 다음 뉴스 RSS는 크롤링 제한이 있을 수 있어 구글/네이버와 병행이 좋습니다.
-        # 여기서는 웹 검색결과 RSS 기반 예시를 작성합니다.
-        
-        # 3. 구글 수집
-        start = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
-        # BLACKLIST_DOMAINS에 다음(daum.net)이 포함되어 구글 결과에서 자동 제외됩니다.
-        g_q = f"(\"경희대\" OR \"경희대학교\") after:{start} " + " ".join([f"-site:{b}" for b in BLACKLIST_DOMAINS])
+        # 2. 구글 수집 (다음 도메인 제외)
+        g_blacklist = BLACKLIST_DOMAINS + ["v.daum.net", "news.daum.net"]
+        g_q = f"(\"경희대\" OR \"경희대학교\") after:{start_date} " + " ".join([f"-site:{b}" for b in g_blacklist])
         g_f = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(g_q)}&hl=ko&gl=KR&ceid=KR:ko")
-        
         for entry in g_f.entries:
-            if not hasattr(entry, 'source') or "Google News" in entry.source.title: s_name = ""
-            else: s_name = entry.source.title
+            s_name = entry.source.title if hasattr(entry, 'source') else ""
             name, tier = get_tier_info(entry.link, s_name, entry.title)
             temp.append({"title": entry.title, "link": entry.link, "source": name, "date": entry.published, "type": "Google", "tier": tier})
 
-        # 다음(Daum) 검색 결과 보완 (구글 검색에 포함되지 않은 실시간성 다음 링크 수집 시 유용)
-        # 단, Daum 전용 탭 구분을 위해 검색 필터링 강화
-        daum_search_f = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote('경희대 site:daum.net')}?hl=ko&gl=KR&ceid=KR:ko")
-        for entry in daum_search_f.entries:
-            name, tier = get_tier_info(entry.link, "다음뉴스", entry.title)
-            temp.append({"title": entry.title, "link": entry.link, "source": name, "date": entry.published, "type": "Daum", "tier": tier})
+        # 3. 다음 수집 (구글 RSS의 site:daum.net 기능을 빌려와서 매체명 정제)
+        d_q = f"(\"경희대\" OR \"경희대학교\") site:daum.net after:{start_date}"
+        d_f = feedparser.parse(f"https://news.google.com/rss/search?q={urllib.parse.quote(d_q)}&hl=ko&gl=KR&ceid=KR:ko")
+        for entry in d_f.entries:
+            # 다음 뉴스 제목 예: "기사제목 - 매체명" 형태가 많음
+            full_title = entry.title
+            s_name = entry.source.title if hasattr(entry, 'source') else ""
+            
+            # get_tier_info에서 제목의 " - 매체명" 부분을 찢어서 처리함
+            name, tier = get_tier_info(entry.link, s_name, full_title)
+            
+            # 출력용 제목에서 " - 매체명" 제거하여 깔끔하게 보이기
+            display_title = full_title.split(" - ")[0] if " - " in full_title else full_title
+            
+            temp.append({
+                "title": display_title, 
+                "link": entry.link, 
+                "source": name, 
+                "date": entry.published, 
+                "type": "Daum", 
+                "tier": tier
+            })
 
+        # 중복 제거
         seen, final = set(), []
         for c in temp:
             clean_t = re.sub(r'[^가-힣0-9a-zA-Z]', '', c['title'])[:15]
@@ -197,6 +216,12 @@ try:
             with pd.ExcelWriter(out, engine='openpyxl') as writer:
                 df_ex.to_excel(writer, index=False)
             st.download_button(label="엑셀 파일 다운로드", data=out.getvalue(), file_name=f"KHU_News_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+        st.divider()
+        st.header("📊 매체 등급 정보")
+        for tier_num in [1, 2, 3]:
+            with st.expander(f"Tier {tier_num} 리스트", expanded=False):
+                st.write(", ".join(TIER_DATA[tier_num]))
 
     if not st.session_state.news_list:
         st.info("왼쪽 사이드바의 [업데이트] 버튼을 눌러주세요.")
